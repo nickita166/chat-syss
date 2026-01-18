@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Group Chat</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header id="header" style="display: none;">
+            <div id="user-display">Loading...</div>
+            <a href="#" onclick="logout()" class="logout">Logout</a>
+        </header>
+
+        <div id="login-prompt" class="login-prompt">
+            <h2>Please log in to chat</h2>
+            <a href="login.html" class="login-btn">Go to Login</a>
+        </div>
+
+        <div id="chat-section" class="chat-section" style="display: none;">
+            <div class="groups-section">
+                <div class="group-controls">
+                    <button id="createBtn" onclick="createGroup()" disabled>Create Group</button>
+                    <input id="codeInput" placeholder="Enter code (e.g. 7FU54HUFG5)" maxlength="10" disabled>
+                    <button onclick="joinGroup()" disabled>Join Group</button>
+                </div>
+                <select id="groupSelect" disabled><option>Select a group...</option></select>
+                <div id="groupCode" class="current-group"></div>
+            </div>
+
+            <div id="messages" class="messages"></div>
+            
+            <form id="msgForm" class="message-form">
+                <input id="msgInput" placeholder="Type your message..." maxlength="500" disabled>
+                <button type="submit" disabled>Send</button>
+            </form>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
