@@ -49,7 +49,6 @@ def set_name():
     user_data['name'] = data.get('name', '').strip()[:20]
     save_user_data(user_data)
     resp = make_response(jsonify({'status': 'ok'}))
-    resp.set_cookie('sessionid', session.sid, max_age=31536000)
     return resp
 
 @app.route('/api/groups')
@@ -68,9 +67,7 @@ def create_group():
     if code not in user_data['favorite_groups']:
         user_data['favorite_groups'].append(code)
         save_user_data(user_data)
-    resp = make_response(jsonify({'code': code}))
-    resp.set_cookie('sessionid', session.sid, max_age=31536000)
-    return resp
+    return jsonify({'code': code, 'invite': f"{request.host}/join/{code}"})
 
 @app.route('/api/join-group/<code>')
 def join_group(code):
@@ -82,9 +79,7 @@ def join_group(code):
     if code not in user_data['favorite_groups']:
         user_data['favorite_groups'].append(code)
         save_user_data(user_data)
-    resp = make_response(jsonify({'status': 'joined'}))
-    resp.set_cookie('sessionid', session.sid, max_age=31536000)
-    return resp
+    return jsonify({'status': 'joined', 'code': code})
 
 @app.route('/api/messages/<code>')
 def get_messages(code):
@@ -98,9 +93,7 @@ def get_messages(code):
         time_str = datetime.fromisoformat(msg['timestamp']).strftime('%I:%M:%S %p')
         messages_html += f'<div class="message"><strong>{msg["username"]}:</strong> <span style="opacity:0.7">{time_str}</span> {msg["text"]}</div>'
     
-    resp = make_response(jsonify({'html': messages_html}))
-    resp.set_cookie('sessionid', session.sid, max_age=31536000)
-    return resp
+    return jsonify({'html': messages_html})
 
 @app.route('/api/send-message/<code>', methods=['POST'])
 def send_message(code):
@@ -120,9 +113,27 @@ def send_message(code):
         groups[code].append(msg)
         save_groups(groups)
     
-    resp = make_response(jsonify({'status': 'sent'}))
-    resp.set_cookie('sessionid', session.sid, max_age=31536000)
-    return resp
+    return jsonify({'status': 'sent'})
+
+@app.route('/join/<code>')
+def join_page(code):
+    return make_response(f'''
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Joining Group {code}</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+        <script>
+            window.groupCode = '{code}';
+            setTimeout(() => window.location.href = '/', 1500);
+        </script>
+    </head>
+    <body style="background:#1a1a1a;color:#eee;font-family:Arial;text-align:center;padding-top:100px;">
+        <h1>🔒 Joining Group {code}</h1>
+        <p>Redirecting to chat... (if not automatic, <a href="/">click here</a>)</p>
+    </body>
+    </html>
+    ''')
 
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
@@ -187,6 +198,32 @@ def catch_all(path):
     <script>
         let currentGroup = '';
         
+        // AUTO-JOIN FROM INVITE LINK
+        window.onload = function() {
+            const groupCode = window.groupCode || new URLSearchParams(window.location.hash.substring(1)).get('join');
+            if (groupCode) {
+                joinFromInvite(groupCode);
+            } else {
+                init();
+            }
+        };
+        
+        async function joinFromInvite(code) {
+            try {
+                await fetch(`/api/join-group/${code}`, {credentials: 'include'});
+                document.getElementById('nameScreen').style.display = 'none';
+                document.getElementById('chatScreen').style.display = 'flex';
+                document.getElementById('nameDisplay').textContent = ' (joined ' + code + ')';
+                currentGroup = code;
+                updateGroupInfo(code);
+                loadMessages();
+                setInterval(loadMessages, 2000);
+            } catch(e) {
+                console.error('Join failed:', e);
+                init();
+            }
+        }
+        
         async function init(){
             document.getElementById('setNameBtn').onclick = setName;
             document.getElementById('nameInput').addEventListener('keypress', e => e.key === 'Enter' && setName());
@@ -225,7 +262,7 @@ def catch_all(path):
                     select.appendChild(option);
                 });
                 
-                if(data.favorite_groups.length > 0){
+                if(data.favorite_groups.length > 0 && !currentGroup){
                     select.value = data.favorite_groups[0];
                     updateGroupInfo(data.favorite_groups[0]);
                 }
@@ -251,7 +288,8 @@ def catch_all(path):
         }
         
         async function copyInvite(code){
-            navigator.clipboard.writeText(`${window.location.origin}/#${code}`);
+            const inviteUrl = `${window.location.origin}/join/${code}`;
+            await navigator.clipboard.writeText(inviteUrl);
             const btn = event.target;
             const original = btn.textContent;
             btn.textContent = '✓';
@@ -295,8 +333,6 @@ def catch_all(path):
             if(this.value) updateGroupInfo(this.value);
         };
         document.getElementById('messageInput').addEventListener('keypress', e => e.key === 'Enter' && sendMessage());
-        
-        window.onload = init;
     </script>
 </body>
 </html>
