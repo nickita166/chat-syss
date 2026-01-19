@@ -1,256 +1,259 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, make_response, session
 import random
 import string
-from collections import defaultdict
+import json
+import os
+import sqlite3
+from datetime import datetime
+import uuid
 
 app = Flask(__name__)
+app.secret_key = os.environ.get('SECRETKEY', 'your-super-secret-key-change-in-production')
 
-SHARED_GROUPS = defaultdict(list)
+DB_PATH = 'chats.db'
+
+def init_db():
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute('''CREATE TABLE IF NOT EXISTS users (
+        user_id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        favorite_groups TEXT DEFAULT '[]'
+    )''')
+    
+    conn.execute('''CREATE TABLE IF NOT EXISTS messages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id TEXT NOT NULL,
+        group_code TEXT NOT NULL,
+        username TEXT NOT NULL,
+        text TEXT NOT NULL,
+        timestamp TEXT NOT NULL,
+        FOREIGN KEY (user_id) REFERENCES users (user_id)
+    )''')
+    conn.commit()
+    conn.close()
+
+def get_db_connection():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+def get_user_id():
+    user_id = session.get('user_id')
+    if not user_id:
+        user_id = str(uuid.uuid4())
+        session['user_id'] = user_id
+    return user_id
+
+@app.route('/api/init-db')
+def init_database():
+    init_db()
+    return jsonify({'status': 'Database initialized'})
+
+@app.route('/api/set-name', methods=['POST'])
+def set_name():
+    data = request.get_json() or {}
+    name = data.get('name', '').strip()
+    if not name or len(name) > 20:
+        return jsonify({'error': 'Invalid name'}), 400
+    
+    user_id = get_user_id()
+    conn = get_db_connection()
+    
+    conn.execute('INSERT OR REPLACE INTO users (user_id, name, favorite_groups) VALUES (?, ?, COALESCE((SELECT favorite_groups FROM users WHERE user_id = ?), \'{}\'))',
+                (user_id, name, user_id))
+    conn.commit()
+    conn.close()
+    
+    return jsonify({'success': True})
 
 @app.route('/api/create-group', methods=['POST'])
 def create_group():
+    user_id = get_user_id()
     code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))
-    SHARED_GROUPS[code] = []
-    return jsonify({'code': code, 'invite': f"https://{request.host}/join/{code}"})
+    
+    conn = get_db_connection()
+    # Add to user's favorite groups
+    conn.execute('UPDATE users SET favorite_groups = json_insert(COALESCE(favorite_groups, \'[]\'), \'$.[-1]\', ?) WHERE user_id = ?',
+                (code, user_id))
+    conn.commit()
+    conn.close()
+    
+    return jsonify({'code': code})
 
-@app.route('/api/join-group/<code>')
-def join_group(code):
-    if code not in SHARED_GROUPS:
-        return jsonify({'error': 'Group not found'}), 404
-    return jsonify({'success': True})
+@app.route('/api/groups', methods=['GET'])
+def groups_api():
+    user_id = get_user_id()
+    conn = get_db_connection()
+    user = conn.execute('SELECT favorite_groups FROM users WHERE user_id = ?', (user_id,)).fetchone()
+    conn.close()
+    
+    groups = json.loads(user['favorite_groups']) if user and user['favorite_groups'] else []
+    return jsonify(groups)
 
-@app.route('/api/groups')
-def list_groups():
-    return jsonify(list(SHARED_GROUPS.keys()))
-
-@app.route('/api/messages/<code>')
-def get_messages(code):
-    if code not in SHARED_GROUPS:
-        return jsonify({'html': '<div class="message">Group not found - get new invite</div>'})
+@app.route('/api/messages/<code>', methods=['GET', 'POST'])
+def messages(code):
+    user_id = get_user_id()
+    conn = get_db_connection()
+    
+    if request.method == 'POST':
+        data = request.get_json() or {}
+        text = data.get('text', '').strip()
+        if not text:
+            return jsonify({'error': 'Empty message'}), 400
+        
+        conn.execute('INSERT INTO messages (user_id, group_code, username, text, timestamp) VALUES (?, ?, ?, ?, ?)',
+                    (user_id, code, session.get('username', 'Anonymous'), text, datetime.now().strftime('%H:%M:%S')))
+        conn.commit()
+        conn.close()
+        return jsonify({'status': 'sent'})
+    
+    # GET: return last 50 messages for this user + group
+    msgs = conn.execute('''
+        SELECT username, text, timestamp 
+        FROM messages 
+        WHERE user_id = ? AND group_code = ? 
+        ORDER BY timestamp DESC 
+        LIMIT 50
+    ''', (user_id, code)).fetchall()
+    conn.close()
     
     messages_html = ''
-    messages = SHARED_GROUPS[code][-50:]
-    for msg in messages:
-        messages_html += f'<div class="message"><strong>{msg.get("user", "Anon")}:</strong> {msg.get("text", "")} <small>{msg.get("timestamp", "Now")}</small></div>'
+    for msg in reversed(msgs):
+        messages_html += f'<div class="message"><strong>{msg["username"]}:</strong> <span style="opacity:0.7">{msg["timestamp"]}</span> {msg["text"]}</div>'
     
-    return jsonify({'html': messages_html or '<div class="message">No messages yet</div>'})
-
-@app.route('/api/messages/<code>', methods=['POST'])
-def send_message(code):
-    data = request.get_json() or {}
-    SHARED_GROUPS[code].append({
-        'user': data.get('user', 'Anonymous'),
-        'text': data.get('text', '').strip(),
-        'timestamp': data.get('timestamp', 'Now')
-    })
-    return jsonify({'status': 'sent'})
-
-@app.route('/join/<code>')
-def join_page(code):
-    return f'''
-<!DOCTYPE html>
-<html><head><meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"><title>Join {code}</title>
-<style>body{{background:#000;color:#e0e0e0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;text-align:center;padding:20px;margin:0;}}input{{padding:15px;margin:10px;border:2px solid #444;background:#1a1a1a;color:#e0e0e0;border-radius:10px;width:90%;max-width:300px;font-size:18px;}}button{{padding:15px 30px;background:#0a74da;border:none;color:white;border-radius:10px;cursor:pointer;font-size:16px;}}h1{{font-size:24px;margin:20px 0;}}</style></head>
-<body><h1>Join Group: <strong>{code}</strong></h1><input id="nameInput" placeholder="Enter your name" autocomplete="name"><button onclick="join()">Join Chat</button><script>async function join(){{const name=document.getElementById('nameInput').value.trim();if(!name)return alert('Enter a name');localStorage.setItem('username',name);window.location.href='/';}}if(localStorage.getItem('username'))window.location.href='/';</script></body></html>'''
+    return jsonify({'html': messages_html})
 
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
 def catch_all(path):
+    init_db()  # Ensure DB exists
     return '''
 <!DOCTYPE html>
-<html>
-<head>
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>Private Chat</title>
-<style>
-*{margin:0;padding:0;box-sizing:border-box;}
-html{font-size:16px;-webkit-text-size-adjust:none;}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#000;color:#e0e0e0;height:100vh;overflow:hidden;width:100%;}
-.container{max-width:600px;margin:0 auto;height:100vh;display:flex;flex-direction:column;}
-.header{padding:20px;background:linear-gradient(135deg,#1a1a1a,#2d2d2d);text-align:center;border-bottom:1px solid #444;flex-shrink:0;}
-.name-screen{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;background:#000;padding:20px;}
-.name-screen input{padding:15px;font-size:18px;border:2px solid #444;background:#1a1a1a;color:#e0e0e0;border-radius:10px;width:100%;max-width:300px;text-align:center;margin:10px 0;}
-.name-screen button{padding:15px 30px;background:#0a74da;border:none;color:white;border-radius:10px;font-size:16px;cursor:pointer;}
-.chat-screen{display:flex;flex-direction:column;height:100vh;}
-.groups{padding:15px;background:#1a1a1a;border-bottom:1px solid #444;flex-shrink:0;}
-.groups select{width:100%;padding:12px;background:#2d2d2d;color:#e0e0e0;border:1px solid #444;border-radius:8px;font-size:16px;margin-bottom:10px;}
-.group-info{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;font-size:14px;}
-.invite-btn{padding:8px 16px;background:#0a84ff;border:none;color:white;border-radius:6px;cursor:pointer;font-size:13px;flex-shrink:0;}
-.messages{flex:1;overflow-y:auto;padding:20px;background:#0f0f0f;}
-.message{margin-bottom:12px;padding:12px;background:#1a1a1a;border-radius:12px;word-wrap:break-word;}
-.input-area{padding:20px;background:#1a1a1a;border-top:1px solid #444;display:flex;gap:10px;flex-shrink:0;}
-.input-area input{flex:1;padding:15px;background:#2d2d2d;color:#e0e0e0;border:1px solid #444;border-radius:20px;font-size:16px;}
-.input-area button{padding:15px 25px;background:#0a74da;border:none;color:white;border-radius:20px;cursor:pointer;font-size:16px;flex-shrink:0;}
-.private{font-style:italic;color:#888;}
-small{color:#888;font-size:12px;}
-button:disabled{background:#444;cursor:not-allowed;}
-@media (max-width: 480px) {html{font-size:14px;}.header{padding:15px;}.groups{padding:12px;}.input-area{padding:15px;}}
-</style>
-</head>
+<html><head><title>🔒 Private Chat - SQLite</title>
+<style>*{margin:0;padding:0;box-sizing:border-box;}
+body{font-family:system-ui;background:#000;color:#e0e0e0;height:100vh;overflow:hidden;}
+.container{max-width:800px;margin:0 auto;height:100vh;display:flex;flex-direction:column;}
+.name-screen{display:flex;flex-direction:column;justify-content:center;align-items:center;height:100vh;gap:20px;}
+.chat-screen{display:none;flex-direction:column;height:100vh;}
+.header{background:#111;padding:15px;border-bottom:1px solid #333;display:flex;justify-content:space-between;align-items:center;}
+.groups{flex-grow:1;overflow-x:auto;padding:0 15px;max-width:400px;}
+.group-btn{background:#333;color:#e0e0e0;border:none;padding:8px 12px;margin:2px;border-radius:20px;font-size:12px;cursor:pointer;white-space:nowrap;}
+.group-btn:hover{background:#555;}
+.group-btn.active{background:#007acc;}
+.messages{flex:1;overflow-y:auto;padding:20px 15px;background:#000;}
+.message{margin-bottom:12px;padding:8px;background:#111;border-radius:8px;}
+.message strong{color:#007acc;}
+.input-area{display:flex;padding:15px;background:#111;border-top:1px solid #333;gap:10px;}
+#messageInput{flex:1;background:#222;color:#e0e0e0;border:1px solid #444;border-radius:20px;padding:12px 16px;font-size:14px;}
+#sendBtn{background:#007acc;color:white;border:none;border-radius:20px;padding:12px 20px;cursor:pointer;font-weight:500;flex-shrink:0;}
+#nameInput{background:#222;color:#e0e0e0;border:1px solid #444;border-radius:8px;padding:20px;font-size:18px;width:300px;max-width:90vw;text-align:center;}
+.btn{background:#007acc;color:white;border:none;border-radius:8px;padding:15px 30px;font-size:16px;cursor:pointer;}
+.btn:hover{background:#005a99;}
+.status{color:#888;font-size:12px;}
+</style></head>
 <body>
+<div class="container">
 <div id="name-screen" class="name-screen">
-    <h1>Private Chat</h1>
-    <input id="nameInput" placeholder="Enter your name..." maxlength="20" autocomplete="name">
-    <button id="setNameBtn">Continue</button>
+<h1>🔒 Private SQLite Chat</h1>
+<input id="nameInput" placeholder="Enter your name..." maxlength="20">
+<button id="setNameBtn" class="btn">Start Chatting</button>
+<div class="status">Chats persist forever across sessions</div>
 </div>
-<div id="chat-screen" class="chat-screen" style="display:none;">
-    <div class="header">
-        <h2>Private Groups</h2>
-        <div id="currentUser"></div>
-    </div>
-    <div class="groups">
-        <select id="groupSelect"><option>Loading groups...</option></select>
-        <div id="groupInfo" style="display:none;"></div>
-        <button onclick="createGroup()">New Private Group</button>
-    </div>
-    <div id="messages" class="messages">Select a group to start chatting</div>
-    <div class="input-area">
-        <input id="messageInput" placeholder="Type a message..." disabled>
-        <button id="sendBtn" onclick="sendMessage()" disabled>Send</button>
-    </div>
+<div id="chat-screen" class="chat-screen">
+<div class="header">
+<div>Your Groups:</div>
+<button id="newGroupBtn" class="group-btn">+ New Group</button>
 </div>
-
+<div id="groupsList" class="groups"></div>
+<div id="messages" class="messages">Select a group to start chatting</div>
+<div class="input-area">
+<input id="messageInput" placeholder="Type a message..." disabled>
+<button id="sendBtn" disabled>Send</button>
+</div>
+</div>
+</div>
 <script>
-let currentGroup = '';
-let username = localStorage.getItem('username') || '';
+let currentGroup=null,user='';
 
-function init() {
-    const nameScreen = document.getElementById('name-screen');
-    const chatScreen = document.getElementById('chat-screen');
-    
-    if (username) {
-        nameScreen.style.display = 'none';
-        chatScreen.style.display = 'flex';
-        document.getElementById('currentUser').textContent = `Logged in as: ${username}`;
-        loadGroups();
-        setTimeout(() => {
-            if (document.getElementById('groupSelect').options.length > 1) {
-                document.getElementById('groupSelect').selectedIndex = 1;
-                document.getElementById('groupSelect').onchange();
-            }
-        }, 1000);
-        setInterval(loadMessages, 2000);
-    } else {
-        nameScreen.style.display = 'flex';
-        chatScreen.style.display = 'none';
-    }
-    
-    document.getElementById('setNameBtn').onclick = setName;
-    document.getElementById('nameInput').addEventListener('keypress', e => {
-        if (e.key === 'Enter') setName();
-    });
+async function init(){
+    document.getElementById('setNameBtn').onclick=setName;
+    document.getElementById('nameInput').addEventListener('keypress',e=>e.key==='Enter'&&setName());
     document.getElementById('nameInput').focus();
 }
 
-function setName() {
-    username = document.getElementById('nameInput').value.trim();
-    if (username) {
-        localStorage.setItem('username', username);
-        document.getElementById('name-screen').style.display = 'none';
-        document.getElementById('chat-screen').style.display = 'flex';
-        document.getElementById('currentUser').textContent = `Logged in as: ${username}`;
+async function setName(){
+    user=document.getElementById('nameInput').value.trim();
+    if(!user)return;
+    
+    const res=await fetch('/api/set-name',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:user})});
+    if(res.ok){
+        document.getElementById('name-screen').style.display='none';
+        document.getElementById('chat-screen').style.display='flex';
         loadGroups();
     }
 }
 
-async function loadGroups() {
-    try {
-        const res = await fetch('/api/groups');
-        const groups = await res.json();
-        const select = document.getElementById('groupSelect');
-        if (groups.length === 0) {
-            select.innerHTML = '<option>No groups - create one!</option>';
-        } else {
-            select.innerHTML = groups.map(g => `<option value="${g}">${g}</option>`).join('');
-        }
-    } catch(e) {
-        console.error('Groups load error:', e);
-    }
-}
-
-function updateGroupInfo(code) {
-    document.getElementById('groupInfo').style.display = 'flex';
-    document.getElementById('groupInfo').innerHTML = `
-        <div class="group-info">
-            <span>${code} <span class="private">(private)</span></span>
-            <button class="invite-btn" onclick="copyInvite('${window.location.origin}/join/${code}')">📋 Copy Invite</button>
-        </div>
-    `;
-}
-
-async function createGroup() {
-    try {
-        const res = await fetch('/api/create-group', {method: 'POST'});
-        const data = await res.json();
-        await loadGroups();
-        document.getElementById('groupSelect').value = data.code;
-        document.getElementById('groupSelect').onchange();
-    } catch(e) {
-        alert('Error creating group');
-    }
-}
-
-function copyInvite(invite) {
-    navigator.clipboard.writeText(invite).then(() => {
-        alert('Invite copied!');
-    }).catch(() => {
-        prompt('Copy this:', invite);
+async function loadGroups(){
+    const res=await fetch('/api/groups');
+    const groups=await res.json();
+    const list=document.getElementById('groupsList');
+    list.innerHTML='';
+    groups.forEach(code=>{
+        const btn=document.createElement('button');
+        btn.className='group-btn';
+        btn.textContent=code;
+        btn.onclick=()=>joinGroup(code);
+        list.appendChild(btn);
     });
 }
 
-document.getElementById('groupSelect').onchange = function() {
-    if (this.value) {
-        currentGroup = this.value;
-        updateGroupInfo(this.value);
-        document.getElementById('messageInput').disabled = false;
-        document.getElementById('sendBtn').disabled = false;
-        document.getElementById('messageInput').focus();
-        loadMessages();
-    } else {
-        document.getElementById('groupInfo').style.display = 'none';
-        document.getElementById('messageInput').disabled = true;
-        document.getElementById('sendBtn').disabled = true;
-        currentGroup = '';
-    }
-};
-
-async function loadMessages() {
-    if (!currentGroup) return;
-    try {
-        const res = await fetch(`/api/messages/${currentGroup}`);
-        const data = await res.json();
-        document.getElementById('messages').innerHTML = data.html;
-        document.getElementById('messages').scrollTop = document.getElementById('messages').scrollHeight;
-    } catch(e) {
-        console.error('Messages error:', e);
+async function createGroup(){
+    const res=await fetch('/api/create-group',{method:'POST',headers:{'Content-Type':'application/json'}});
+    const data=await res.json();
+    if(data.code){
+        loadGroups();
+        setTimeout(()=>joinGroup(data.code),100);
     }
 }
 
-async function sendMessage() {
-    const text = document.getElementById('messageInput').value.trim();
-    if (!text || !currentGroup || !username) return;
-    
-    try {
-        await fetch(`/api/messages/${currentGroup}`, {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({text, user: username, timestamp: new Date().toLocaleTimeString()})
-        });
-        document.getElementById('messageInput').value = '';
-        loadMessages();
-    } catch(e) {
-        alert('Send failed');
-    }
+async function joinGroup(code){
+    currentGroup=code;
+    document.querySelectorAll('.group-btn').forEach(btn=>btn.classList.remove('active'));
+    event.target.classList.add('active');
+    document.getElementById('messageInput').disabled=false;
+    document.getElementById('sendBtn').disabled=false;
+    document.getElementById('messageInput').focus();
+    loadMessages();
 }
 
-document.getElementById('messageInput').addEventListener('keypress', e => {
-    if (e.key === 'Enter') sendMessage();
-});
+async function loadMessages(){
+    if(!currentGroup)return;
+    const res=await fetch(`/api/messages/${currentGroup}`);
+    const data=await res.json();
+    document.getElementById('messages').innerHTML=data.html||'No messages yet';
+    document.getElementById('messages').scrollTop=document.getElementById('messages').scrollHeight;
+}
 
-window.onload = init;
-</script>
-</body>
-</html>'''
+async function sendMessage(){
+    if(!currentGroup)return;
+    const text=document.getElementById('messageInput').value.trim();
+    if(!text)return;
+    await fetch(`/api/messages/${currentGroup}`,{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({text,timestamp:new Date().toLocaleTimeString()})
+    });
+    document.getElementById('messageInput').value='';
+    loadMessages();
+}
+
+document.getElementById('newGroupBtn').onclick=createGroup;
+document.getElementById('sendBtn').onclick=sendMessage;
+document.getElementById('messageInput').addEventListener('keypress',e=>e.key==='Enter'&&sendMessage());
+setInterval(loadMessages,2000);
+window.onload=init;
+</script></body></html>    '''
 
 if __name__ == '__main__':
+    init_db()
     app.run(debug=True)
