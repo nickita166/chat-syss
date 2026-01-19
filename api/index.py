@@ -18,7 +18,7 @@ def groups():
         return jsonify({'exists': False}), 400
     return jsonify(list(groups.keys())[:20])
 
-@app.route('/api/create-group', methods=['POST'])
+@app.route('/api/create-group', methods=['GET', 'POST'])
 def create_group():
     code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))
     groups[code] = []
