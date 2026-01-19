@@ -4,7 +4,7 @@ import string
 import os
 
 app = Flask(__name__)
-app.secret_key = os.environ.get('41b8d9c5a22a3acb827c7a4731be83a54b67d0cca88a84b8a5ae3f24a17adb74', '41b8d9c5a22a3acb827c7a4731be83a54b67d0cca88a84b8a5ae3f24a17adb74')
+app.secret_key = os.environ.get('SECRET_KEY', 'fallback-for-local-only')
 
 users = {}
 groups = {}
