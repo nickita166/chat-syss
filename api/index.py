@@ -3,143 +3,91 @@ import random
 import string
 import json
 import os
-import uuid
 from datetime import datetime
-import sqlite3
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRETKEY', 'your-super-secret-key-change-in-production')
 
-DB_PATH = '/tmp/chats.db'
+def get_user_data():
+    user_data = session.get('user_data')
+    if user_data:
+        return json.loads(user_data)
+    return {'name': '', 'favorite_groups': []}
 
-def get_db_connection():
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    
-    conn.execute('''CREATE TABLE IF NOT EXISTS users (
-        user_id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        favorite_groups TEXT DEFAULT '[]'
-    )''')
-    
-    conn.execute('''CREATE TABLE IF NOT EXISTS messages (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id TEXT NOT NULL,
-        group_code TEXT NOT NULL,
-        username TEXT NOT NULL,
-        text TEXT NOT NULL,
-        timestamp TEXT NOT NULL
-    )''')
-    return conn
+def save_user_data(user_data):
+    session['user_data'] = json.dumps(user_data)
 
-def get_user_id():
-    user_id = session.get('user_id')
-    if not user_id:
-        user_id = str(uuid.uuid4())
-        session['user_id'] = user_id
-    return user_id
+def get_user_groups():
+    groups_data = session.get('groups', '{}')
+    return json.loads(groups_data) if groups_data else {}
+
+def save_user_groups(groups_data):
+    session['groups'] = json.dumps(groups_data)
 
 @app.route('/api/set-name', methods=['POST'])
 def set_name():
-    try:
-        data = request.get_json() or {}
-        name = data.get('name', '').strip()
-        if not name or len(name) > 20:
-            return jsonify({'error': 'Invalid name'}), 400
-        
-        user_id = get_user_id()
-        session['username'] = name  # ← FIX 1: Store name in session
-        
-        conn = get_db_connection()
-        existing = conn.execute('SELECT favorite_groups FROM users WHERE user_id = ?', (user_id,)).fetchone()
-        if existing:
-            conn.execute('UPDATE users SET name = ? WHERE user_id = ?', (name, user_id))
-        else:
-            conn.execute('INSERT INTO users (user_id, name, favorite_groups) VALUES (?, ?, ?)', 
-                        (user_id, name, '[]'))
-        conn.commit()
-        conn.close()
-        
+    data = request.get_json() or {}
+    name = data.get('name', '').strip()
+    if name and len(name) <= 20:
+        user_data = get_user_data()
+        user_data['name'] = name
+        session['username'] = name  # For messages
+        save_user_data(user_data)
         return jsonify({'success': True})
-    except Exception:
-        return jsonify({'error': 'Server error'}), 500
+    return jsonify({'error': 'Invalid name'}), 400
 
 @app.route('/api/create-group', methods=['POST'])
 def create_group():
-    try:
-        user_id = get_user_id()
-        code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))
-        
-        conn = get_db_connection()
-        existing = conn.execute('SELECT favorite_groups FROM users WHERE user_id = ?', (user_id,)).fetchone()
-        groups = json.loads(existing['favorite_groups']) if existing else []
-        groups.append(code)
-        
-        if existing:
-            conn.execute('UPDATE users SET favorite_groups = ? WHERE user_id = ?', 
-                        (json.dumps(groups), user_id))
-        else:
-            conn.execute('INSERT INTO users (user_id, name, favorite_groups) VALUES (?, ?, ?)', 
-                        (user_id, session.get('username', ''), json.dumps(groups)))
-        
-        conn.commit()
-        conn.close()
-        return jsonify({'code': code})
-    except Exception:
-        return jsonify({'error': 'Create failed'}), 500
+    user_groups = get_user_groups()
+    user_data = get_user_data()
+    
+    code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))
+    user_groups[code] = []
+    save_user_groups(user_groups)
+    
+    if 'favorite_groups' not in user_data:
+        user_data['favorite_groups'] = []
+    if code not in user_data['favorite_groups']:
+        user_data['favorite_groups'].append(code)
+    save_user_data(user_data)
+    
+    return jsonify({'code': code})
 
 @app.route('/api/groups', methods=['GET'])
 def groups_api():
-    try:
-        user_id = get_user_id()
-        conn = get_db_connection()
-        user = conn.execute('SELECT favorite_groups FROM users WHERE user_id = ?', (user_id,)).fetchone()
-        conn.close()
-        
-        groups = json.loads(user['favorite_groups']) if user else []
-        return jsonify(groups)
-    except Exception:
-        return jsonify([])
+    user_data = get_user_data()
+    return jsonify(user_data.get('favorite_groups', []))
 
 @app.route('/api/messages/<code>', methods=['GET', 'POST'])
 def messages(code):
-    try:
-        user_id = get_user_id()
-        conn = get_db_connection()
+    user_groups = get_user_groups()
+    
+    if code not in user_groups:
+        user_groups[code] = []
+        save_user_groups(user_groups)
+    
+    if request.method == 'POST':
+        data = request.get_json() or {}
+        text = data.get('text', '').strip()
+        if not text:
+            return jsonify({'error': 'Empty message'}), 400
         
-        if request.method == 'POST':
-            data = request.get_json() or {}
-            text = data.get('text', '').strip()
-            if not text:
-                conn.close()
-                return jsonify({'error': 'Empty message'}), 400
-            
-            username = session.get('username', 'Anonymous')  # ← FIX 2: Use session username
-            timestamp = datetime.now().strftime('%I:%M:%S %p')  # ← FIX 3: 12hr AM/PM
-            
-            conn.execute('INSERT INTO messages (user_id, group_code, username, text, timestamp) VALUES (?, ?, ?, ?, ?)',
-                        (user_id, code, username, text, timestamp))
-            conn.commit()
-            conn.close()
-            return jsonify({'status': 'sent'})
+        username = session.get('username', 'Anonymous')
+        timestamp = datetime.now().strftime('%I:%M:%S %p')
         
-        # GET messages
-        msgs = conn.execute('''
-            SELECT username, text, timestamp 
-            FROM messages 
-            WHERE user_id = ? AND group_code = ? 
-            ORDER BY id DESC 
-            LIMIT 50
-        ''', (user_id, code)).fetchall()
-        conn.close()
-        
-        messages_html = ''
-        for msg in reversed(msgs):
-            messages_html += f'<div class="message"><strong>{msg["username"]}:</strong> <span style="opacity:0.7">{msg["timestamp"]}</span> {msg["text"]}</div>'
-        
-        return jsonify({'html': messages_html})
-    except Exception:
-        return jsonify({'html': 'Error loading messages'})
+        user_groups[code].append({
+            'username': username,
+            'text': text,
+            'timestamp': timestamp
+        })
+        save_user_groups(user_groups)
+        return jsonify({'status': 'sent'})
+    
+    messages_html = ''
+    for msg in user_groups[code][-50:]:
+        messages_html += f'<div class="message"><strong>{msg["username"]}:</strong> <span style="opacity:0.7">{msg["timestamp"]}</span> {msg["text"]}</div>'
+    
+    return jsonify({'html': messages_html})
 
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
@@ -167,6 +115,7 @@ body{font-family:system-ui;background:#000;color:#e0e0e0;height:100vh;overflow:h
 .btn{background:#007acc;color:white;border:none;border-radius:8px;padding:15px 30px;font-size:16px;cursor:pointer;}
 .btn:hover{background:#005a99;}
 .status{color:#888;font-size:12px;}
+.private::after{content:" 🔒 private";opacity:0.7;font-size:0.8em;}
 </style></head>
 <body>
 <div class="container">
@@ -174,7 +123,7 @@ body{font-family:system-ui;background:#000;color:#e0e0e0;height:100vh;overflow:h
 <h1>🔒 Private Chat</h1>
 <input id="nameInput" placeholder="Enter your name..." maxlength="20">
 <button id="setNameBtn" class="btn">Start Chatting</button>
-<div class="status">Chats persist forever</div>
+<div class="status">Your data persists in signed cookies</div>
 </div>
 <div id="chat-screen" class="chat-screen">
 <div class="header">
@@ -196,6 +145,7 @@ async function init(){
     document.getElementById('setNameBtn').onclick=setName;
     document.getElementById('nameInput').addEventListener('keypress',e=>e.key==='Enter'&&setName());
     document.getElementById('nameInput').focus();
+    loadGroups();  // Load existing groups on startup
 }
 
 async function setName(){
@@ -218,7 +168,7 @@ async function loadGroups(){
         list.innerHTML='';
         groups.forEach(code=>{
             const btn=document.createElement('button');
-            btn.className='group-btn';
+            btn.className='group-btn private';
             btn.textContent=code;
             btn.onclick=()=>joinGroup(code);
             list.appendChild(btn);
@@ -271,7 +221,7 @@ async function sendMessage(){
         await fetch(`/api/messages/${currentGroup}`,{
             method:'POST',
             headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({text,timestamp:new Date().toLocaleTimeString()})
+            body:JSON.stringify({text})
         });
         document.getElementById('messageInput').value='';
         loadMessages();
