@@ -47,32 +47,46 @@ def catch_all(path):
         input,button{font-size:16px;padding:12px;border:1px solid #333;border-radius:8px;background:#111;color:#e0e0e0;}
         button{cursor:pointer;background:#222;}
         button:active{background:#444;}
+        button.enabled{background:#0f0;}
         #nameSection,#groupSection{display:none;}
         #chatSection{display:none;flex-direction:column;height:100%;}
-        #messages{max-height:60vh;overflow-y:auto;padding:10px;border:1px solid #333;margin:10px 0;}
-        .msg{display:flex;margin:5px 0;}
+        #messages{max-height:50vh;overflow-y:auto;padding:10px;border:1px solid #333;margin:10px 0;}
+        .msg{display:flex;margin:5px 0;flex-wrap:wrap;}
         .msg strong{color:#0f0;}
         .private{font-size:12px;color:#888;}
-        #goBtn{display:none;}
-        .joined-ind{ color:#0f0; font-size:12px; }
+        .joined-ind{color:#0f0;font-size:12px;}
+        #inputRow{display:flex;gap:10px;align-items:end;}
+        #messageInput{flex:1;}
     </style>
 </head>
 <body>
     <div class="container">
         <div id="nameSection">
-            <input id="nameInput" placeholder="Enter your name" autofocus>
-            <br><button onclick="saveName()">Start Chatting</button>
+            <input id="nameInput" placeholder="Enter your name" autofocus maxlength="20">
+            <br><br><button onclick="saveName()">Start Chatting</button>
         </div>
+        
         <div id="groupSection">
-            <select id="groupSelect"><option>Your private groups</option></select>
-            <br><button id="copyInvite" onclick="copyInvite()" style="display:none;">Copy Invite Link</button>
-            <br><button onclick="createGroup()">New Private Group</button>
+            <select id="groupSelect" onchange="joinGroup()">
+                <option value="">Select or create group</option>
+            </select>
+            <br><br>
+            <button id="copyInvite" onclick="copyInvite()" style="display:none;background:#0066cc;">Copy Invite Link</button>
+            <br><br>
+            <button onclick="createGroup()" style="background:#cc6600;">New Private Group</button>
             <div id="joinStatus"></div>
         </div>
+        
         <div id="chatSection">
+            <div style="display:flex;gap:10px;align-items:center;margin-bottom:10px;">
+                <strong id="currentGroupDisplay"></strong>
+                <button id="copyInviteChat" onclick="copyInvite()" style="font-size:12px;padding:6px;">📋</button>
+            </div>
             <div id="messages"></div>
-            <input id="messageInput" placeholder="Type message..." disabled>
-            <button id="sendBtn" onclick="sendMessage()" disabled>Send</button>
+            <div id="inputRow">
+                <input id="messageInput" placeholder="Type message..." disabled maxlength="500">
+                <button id="sendBtn" onclick="sendMessage()" disabled>Send</button>
+            </div>
         </div>
     </div>
     <script>
@@ -80,92 +94,103 @@ def catch_all(path):
         let userName = '';
 
         function init() {
-            // Check for invite link #GROUP_CODE
             const hash = window.location.hash.slice(1);
             if (hash && hash.match(/^[A-Z0-9]{10}$/)) {
                 currentGroup = hash;
-                document.getElementById('joinStatus').innerHTML = `<span class="joined-ind">✅ Joined group ${currentGroup}</span>`;
+                document.getElementById('joinStatus').innerHTML = `✅ Joined group ${currentGroup}`;
             }
             
             fetchName().then(() => {
                 if (userName) {
                     showGroups();
                     if (currentGroup) {
-                        joinGroupDirect(currentGroup);
+                        setTimeout(() => joinGroupDirect(currentGroup), 500);
                     }
                 } else {
                     showName();
                 }
             });
+            
             setInterval(loadMessages, 2000);
         }
 
         async function fetchName() {
-            const res = await fetch('/api/user');
-            const data = await res.json();
-            userName = data.name;
-            currentGroup = data.currentGroup || '';
+            try {
+                const res = await fetch('/api/user');
+                const data = await res.json();
+                userName = data.name || '';
+                currentGroup = data.currentGroup || '';
+            } catch(e) {}
         }
 
         async function saveName() {
-            userName = document.getElementById('nameInput').value || 'Anonymous';
-            await fetch('/api/save-user', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({name: userName, favorite_groups: []}),
-                credentials: 'include'
-            });
+            userName = document.getElementById('nameInput').value.trim() || 'Anonymous';
+            try {
+                await fetch('/api/save-user', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({name: userName, favorite_groups: []}),
+                    credentials: 'include'
+                });
+            } catch(e) {}
             showGroups();
         }
 
         async function loadGroups() {
-            const res = await fetch('/api/groups', {credentials: 'include'});
-            const data = await res.json();
-            const select = document.getElementById('groupSelect');
-            select.innerHTML = '<option>Your private groups</option>';
-            data.groups.forEach(g => {
-                const opt = document.createElement('option');
-                opt.value = g.code;
-                opt.textContent = `${g.code} ${g.private ? '(private)' : ''}`;
-                select.appendChild(opt);
-            });
-            if (currentGroup) {
-                select.value = currentGroup;
-                document.getElementById('copyInvite').style.display = 'block';
-            }
+            try {
+                const res = await fetch('/api/groups', {credentials: 'include'});
+                const data = await res.json();
+                const select = document.getElementById('groupSelect');
+                const currentOpt = select.querySelector(`[value="${currentGroup}"]`);
+                select.innerHTML = '<option value="">Your private groups</option>';
+                data.groups.forEach(g => {
+                    const opt = document.createElement('option');
+                    opt.value = g.code;
+                    opt.textContent = `${g.code} (private)`;
+                    select.appendChild(opt);
+                });
+                if (currentOpt) select.value = currentGroup;
+            } catch(e) {}
         }
 
-        function showName() { document.getElementById('nameSection').style.display = 'block'; }
+        function showName() { 
+            document.getElementById('nameSection').style.display = 'block'; 
+        }
+        
         function showGroups() {
             document.getElementById('groupSection').style.display = 'block';
             loadGroups();
         }
         
-        async function joinGroupDirect(code) {
-            currentGroup = code;
-            await saveUserData();
-            document.getElementById('groupSelect').value = code;
-            document.getElementById('copyInvite').style.display = 'block';
-            showChat();
-        }
-
-        function showChat() {
+        function enableChat() {
             document.getElementById('chatSection').style.display = 'flex';
             document.getElementById('groupSection').style.display = 'none';
             document.getElementById('messageInput').disabled = false;
             document.getElementById('sendBtn').disabled = false;
+            document.getElementById('sendBtn').classList.add('enabled');
+            document.getElementById('messageInput').classList.add('enabled');
+            document.getElementById('currentGroupDisplay').textContent = currentGroup || 'No group';
             loadMessages();
         }
 
-        async function createGroup() {
-            const res = await fetch('/api/create-group', {method: 'POST', credentials: 'include'});
-            const data = await res.json();
-            currentGroup = data.code;
+        async function joinGroupDirect(code) {
+            currentGroup = code;
             await saveUserData();
             await loadGroups();
-            document.getElementById('groupSelect').value = data.code;
-            document.getElementById('copyInvite').style.display = 'block';
-            showChat();
+            enableChat();
+        }
+
+        async function createGroup() {
+            try {
+                const res = await fetch('/api/create-group', {method: 'POST', credentials: 'include'});
+                const data = await res.json();
+                currentGroup = data.code;
+                await saveUserData();
+                await loadGroups();
+                enableChat();
+            } catch(e) {
+                alert('Create failed');
+            }
         }
 
         async function joinGroup() {
@@ -173,55 +198,68 @@ def catch_all(path):
             if (code) {
                 currentGroup = code;
                 await saveUserData();
-                showChat();
-            }
-        }
-
-        function copyInvite() {
-            const code = currentGroup;
-            if (code) {
-                const inviteUrl = `${window.location.origin}/#${code}`;
-                navigator.clipboard.writeText(inviteUrl);
-                document.getElementById('copyInvite').textContent = 'Copied!';
-                setTimeout(() => {
-                    document.getElementById('copyInvite').textContent = 'Copy Invite Link';
-                }, 2000);
+                enableChat();
             }
         }
 
         async function saveUserData() {
-            await fetch('/api/save-user', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({current_group: currentGroup}),
-                credentials: 'include'
-            });
+            try {
+                await fetch('/api/save-user', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({current_group: currentGroup}),
+                    credentials: 'include'
+                });
+            } catch(e) {}
+        }
+
+        function copyInvite() {
+            if (currentGroup) {
+                const inviteUrl = `${window.location.origin}/#${currentGroup}`;
+                navigator.clipboard.writeText(inviteUrl).then(() => {
+                    const btn = document.getElementById('copyInvite') || document.getElementById('copyInviteChat');
+                    const original = btn.textContent;
+                    btn.textContent = '✅ Copied!';
+                    setTimeout(() => btn.textContent = original, 2000);
+                });
+            }
         }
 
         async function sendMessage() {
-            const msg = document.getElementById('messageInput').value;
+            const msg = document.getElementById('messageInput').value.trim();
             if (msg && currentGroup) {
-                await fetch('/api/send', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({group: currentGroup, msg: msg}),
-                    credentials: 'include'
-                });
-                document.getElementById('messageInput').value = '';
-                loadMessages();
+                try {
+                    await fetch('/api/send', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({group: currentGroup, msg: msg}),
+                        credentials: 'include'
+                    });
+                    document.getElementById('messageInput').value = '';
+                    loadMessages();
+                } catch(e) {}
             }
         }
 
         async function loadMessages() {
             if (!currentGroup) return;
-            const res = await fetch(`/api/messages/${currentGroup}`, {credentials: 'include'});
-            const msgs = await res.json();
-            const div = document.getElementById('messages');
-            div.innerHTML = msgs.map(m => 
-                `<div class="msg"><strong>${m.user}:</strong> ${m.msg} <small>${m.time}</small></div>`
-            ).join('');
-            div.scrollTop = div.scrollHeight;
+            try {
+                const res = await fetch(`/api/messages/${currentGroup}`, {credentials: 'include'});
+                const msgs = await res.json();
+                const div = document.getElementById('messages');
+                div.innerHTML = msgs.map(m => 
+                    `<div class="msg"><strong>${m.user}:</strong> ${m.msg} <small style="color:#888;">${m.time}</small></div>`
+                ).join('');
+                div.scrollTop = div.scrollHeight;
+            } catch(e) {}
         }
+
+        // Enter to send
+        document.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter' && !document.getElementById('messageInput').disabled) {
+                sendMessage();
+            }
+        });
 
         window.onload = init;
     </script>
@@ -229,7 +267,6 @@ def catch_all(path):
 </html>
     '''
 
-# API endpoints (unchanged)
 @app.route('/api/user')
 def get_user():
     data = get_user_data()
@@ -238,7 +275,7 @@ def get_user():
 
 @app.route('/api/save-user', methods=['POST'])
 def save_user():
-    data = request.json
+    data = request.json or {}
     user_data = get_user_data()
     user_data.update(data)
     save_user_data(user_data)
@@ -258,7 +295,8 @@ def create_group():
     user_data = get_user_data()
     if 'favorite_groups' not in user_data:
         user_data['favorite_groups'] = []
-    user_data['favorite_groups'].append(code)
+    if code not in user_data['favorite_groups']:
+        user_data['favorite_groups'].append(code)
     save_user_data(user_data)
     resp = make_response(jsonify({'code': code}))
     return resp
@@ -266,15 +304,18 @@ def create_group():
 @app.route('/api/send', methods=['POST'])
 def send():
     data = request.json
-    if data['group'] in groups:
+    group = data.get('group')
+    msg = data.get('msg', '')[:500]
+    if group and msg:
+        user_data = get_user_data()
         msg_data = {
-            'user': get_user_data()['name'] or 'Anonymous',
-            'msg': data['msg'][:500],
+            'user': user_data['name'] or 'Anonymous',
+            'msg': msg,
             'time': datetime.now().strftime('%-I:%M %p')
         }
-        groups[data['group']].append(msg_data)
-        if len(groups[data['group']]) > 50:
-            groups[data['group']] = groups[data['group']][-50:]
+        groups[group].append(msg_data)
+        if len(groups[group]) > 50:
+            groups[group] = groups[group][-50:]
     return jsonify({'status': 'sent'})
 
 @app.route('/api/messages/<code>')
