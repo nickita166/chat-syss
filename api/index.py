@@ -1,5 +1,4 @@
 from flask import Flask, request, jsonify, make_response, session
-from flask_cors import CORS
 import random
 import string
 import json
@@ -9,9 +8,6 @@ from datetime import datetime
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRETKEY', 'your-super-secret-key-change-in-production')
 
-# Fix session persistence for AJAX
-CORS(app, supports_credentials=True, origins="*")
-
 def get_user_data():
     user_data = session.get('user_data')
     if user_data:
@@ -20,7 +16,6 @@ def get_user_data():
 
 def save_user_data(user_data):
     session['user_data'] = json.dumps(user_data)
-    session.modified = True  # Force session save
 
 def get_user_groups():
     groups_data = session.get('groups', '{}')
@@ -28,17 +23,19 @@ def get_user_groups():
 
 def save_user_groups(groups_data):
     session['groups'] = json.dumps(groups_data)
-    session.modified = True  # Force session save
 
 @app.after_request
 def after_request(response):
-    response.headers.add('Access-Control-Allow-Credentials', 'true')
-    response.headers.add('Access-Control-Allow-Headers', 'Content-Type')
+    response.headers['Access-Control-Allow-Origin'] = '*'
+    response.headers['Access-Control-Allow-Credentials'] = 'true'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
     return response
 
-@app.route('/api/set-name', methods=['POST'])
-@CORS(supports_credentials=True)
+@app.route('/api/set-name', methods=['POST', 'OPTIONS'])
 def set_name():
+    if request.method == 'OPTIONS':
+        return '', 200
+    
     data = request.get_json() or {}
     name = data.get('name', '').strip()
     if name and len(name) <= 20:
@@ -49,9 +46,11 @@ def set_name():
         return jsonify({'success': True})
     return jsonify({'error': 'Invalid name'}), 400
 
-@app.route('/api/create-group', methods=['POST'])
-@CORS(supports_credentials=True)
+@app.route('/api/create-group', methods=['POST', 'OPTIONS'])
 def create_group():
+    if request.method == 'OPTIONS':
+        return '', 200
+    
     user_groups = get_user_groups()
     user_data = get_user_data()
     
@@ -67,15 +66,19 @@ def create_group():
     
     return jsonify({'code': code})
 
-@app.route('/api/groups', methods=['GET'])
-@CORS(supports_credentials=True)
+@app.route('/api/groups', methods=['GET', 'OPTIONS'])
 def groups_api():
+    if request.method == 'OPTIONS':
+        return '', 200
+    
     user_data = get_user_data()
     return jsonify(user_data.get('favorite_groups', []))
 
-@app.route('/api/messages/<code>', methods=['GET', 'POST'])
-@CORS(supports_credentials=True)
+@app.route('/api/messages/<code>', methods=['GET', 'POST', 'OPTIONS'])
 def messages(code):
+    if request.method == 'OPTIONS':
+        return '', 200
+    
     user_groups = get_user_groups()
     
     if code not in user_groups:
@@ -172,7 +175,7 @@ async function setName(){
     
     const res=await fetch('/api/set-name',{
         method:'POST',
-        credentials: 'include',  // ← FIX: Send cookies
+        credentials: 'include',
         headers:{'Content-Type':'application/json'},
         body:JSON.stringify({name:user})
     });
@@ -185,7 +188,7 @@ async function setName(){
 
 async function loadGroups(){
     try{
-        const res=await fetch('/api/groups', {credentials: 'include'});  // ← FIX: Send cookies
+        const res=await fetch('/api/groups', {credentials: 'include'});
         const groups=await res.json();
         const list=document.getElementById('groupsList');
         list.innerHTML='';
@@ -233,7 +236,7 @@ async function createGroup(){
     try{
         const res=await fetch('/api/create-group',{
             method:'POST',
-            credentials: 'include',  // ← FIX: Send cookies
+            credentials: 'include',
             headers:{'Content-Type':'application/json'}
         });
         const data=await res.json();
@@ -259,7 +262,7 @@ function joinGroup(code){
 async function loadMessages(){
     if(!currentGroup)return;
     try{
-        const res=await fetch(`/api/messages/${currentGroup}`, {credentials: 'include'});  // ← FIX: Send cookies
+        const res=await fetch(`/api/messages/${currentGroup}`, {credentials: 'include'});
         const data=await res.json();
         document.getElementById('messages').innerHTML=data.html||'No messages yet';
         document.getElementById('messages').scrollTop=document.getElementById('messages').scrollHeight;
@@ -275,7 +278,7 @@ async function sendMessage(){
     try{
         await fetch(`/api/messages/${currentGroup}`,{
             method:'POST',
-            credentials: 'include',  // ← FIX: Send cookies
+            credentials: 'include',
             headers:{'Content-Type':'application/json'},
             body:JSON.stringify({text})
         });
