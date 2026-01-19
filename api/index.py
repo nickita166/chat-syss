@@ -173,10 +173,10 @@ body{font-family:system-ui;background:#000;color:#e0e0e0;height:100vh;overflow:h
 <body>
 <div class="container">
 <div id="name-screen" class="name-screen">
-<h1>🔒 Private SQLite Chat</h1>
+<h1>🔒 Private Chat</h1>
 <input id="nameInput" placeholder="Enter your name..." maxlength="20">
 <button id="setNameBtn" class="btn">Start Chatting</button>
-<div class="status">Chats persist forever (SQLite /tmp)</div>
+<div class="status">Chats persist forever (  )</div>
 </div>
 <div id="chat-screen" class="chat-screen">
 <div class="header">
