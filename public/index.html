@@ -10,38 +10,188 @@
         <div id="name-screen" class="name-screen">
             <div class="name-container">
                 <h2>Enter Your Name</h2>
-                <input id="nameInput" placeholder="Your name (max 40 chars)" maxlength="40">
-                <button id="setNameBtn">Start Chatting</button>
+                <input id="nameInput" placeholder="Your name (max 20 chars)" maxlength="20">
+                <button onclick="setUserName()">Start Chatting</button>
                 <div id="nameError" class="error"></div>
             </div>
         </div>
-        
-        <!-- Main Chat -->
+
         <div id="chat-section" class="chat-section" style="display: none;">
-            <header id="header" style="display: flex;">
+            <header id="header">
                 <div id="user-display">Loading...</div>
-                <a href="#" onclick="logout()" class="logout">Logout</a>
+                <a href="#" onclick="clearName()" class="logout">Change Name</a>
             </header>
 
             <div class="groups-section">
                 <div class="group-controls">
-                    <button id="createBtn" onclick="createGroup()" disabled>Create Group</button>
+                    <button onclick="createGroup()" id="createBtn" disabled>Create Group</button>
                     <input id="codeInput" placeholder="Enter code (e.g. 7FU54HUFG5)" maxlength="10" disabled>
                     <button onclick="joinGroup()" disabled>Join Group</button>
                 </div>
-                <select id="groupSelect" disabled><option>Select a group...</option></select>
+                <select id="groupSelect" disabled onchange="if(this.value) joinGroup(this.value)"><option>Select a group...</option></select>
                 <div id="groupCode" class="current-group"></div>
             </div>
 
             <div id="messages" class="messages"></div>
             
-            <form id="msgForm" class="message-form">
+            <form id="msgForm" class="message-form" onsubmit="sendMessage(event)">
                 <input id="msgInput" placeholder="Type your message..." maxlength="500" disabled>
                 <button type="submit" disabled>Send</button>
             </form>
         </div>
     </div>
 
-    <script src="script.js"></script>
+    <script>
+        let currentGroup = '';
+        let user = localStorage.getItem('chatUser') || '';
+        let hasName = !!user;
+
+        // Name button WORKS NOW - direct onclick
+        function setUserName() {
+            const name = document.getElementById('nameInput').value.trim();
+            const errorDiv = document.getElementById('nameError');
+            
+            if (!name || name.length > 20) {
+                errorDiv.textContent = 'Name required (max 20 chars)';
+                return;
+            }
+            
+            if (!/^[a-zA-Z0-9\s]{2,20}$/.test(name)) {
+                errorDiv.textContent = 'Letters, numbers, spaces only';
+                return;
+            }
+            
+            user = name;
+            hasName = true;
+            localStorage.setItem('chatUser', user);
+            showChat();
+            errorDiv.textContent = '';
+        }
+
+        function clearName() {
+            user = '';
+            hasName = false;
+            localStorage.removeItem('chatUser');
+            document.getElementById('chat-section').style.display = 'none';
+            document.getElementById('name-screen').style.display = 'flex';
+            document.getElementById('nameInput').value = '';
+            document.getElementById('nameError').textContent = '';
+            currentGroup = '';
+            localStorage.removeItem('currentGroup');
+        }
+
+        function showChat() {
+            document.getElementById('name-screen').style.display = 'none';
+            document.getElementById('chat-section').style.display = 'block';
+            document.querySelectorAll('#createBtn, #codeInput, #msgInput, #msgForm button, #groupSelect, button[onclick="joinGroup()"]').forEach(el => el.disabled = false);
+            document.getElementById('user-display').textContent = `Logged in as ${user}`;
+        }
+
+        // Auto-start if name exists
+        if (hasName) {
+            showChat();
+        }
+
+        async function loadGroups() {
+            try {
+                const res = await fetch('/api/groups');
+                const codes = await res.json();
+                const select = document.getElementById('groupSelect');
+                select.innerHTML = '<option>Select a group...</option>';
+                codes.forEach(code => {
+                    const option = document.createElement('option');
+                    option.value = code;
+                    option.textContent = code;
+                    select.appendChild(option);
+                });
+            } catch (e) {
+                console.error('Failed to load groups');
+            }
+        }
+
+        async function createGroup() {
+            try {
+                const res = await fetch('/api/create-group', { method: 'POST' });
+                const data = await res.json();
+                joinGroup(data.code);
+            } catch (e) {
+                alert('Failed to create group');
+            }
+        }
+
+        async function joinGroup(code = null) {
+            const inputCode = code || document.getElementById('codeInput').value.trim().toUpperCase();
+            if (!inputCode || inputCode.length !== 10) {
+                alert('Enter valid 10-character code');
+                return;
+            }
+            try {
+                await fetch('/api/groups', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ code: inputCode })
+                });
+                currentGroup = inputCode;
+                localStorage.setItem('currentGroup', currentGroup);
+                document.getElementById('groupSelect').value = inputCode;
+                document.getElementById('groupCode').textContent = `Group: ${currentGroup}`;
+                document.getElementById('codeInput').value = '';
+                loadMessages();
+            } catch (e) {
+                alert('Failed to join group');
+            }
+        }
+
+        async function loadMessages() {
+            if (!currentGroup) return;
+            try {
+                const res = await fetch(`/api/messages/${currentGroup}`);
+                const messages = await res.json();
+                const messagesDiv = document.getElementById('messages');
+                messagesDiv.innerHTML = messages.map(msg => `
+                    <div class="message">
+                        <div>
+                            <span class="user">${msg.user.replace(/[<>]/g, '')}</span>
+                            <span class="time">${msg.timestamp || ''}</span>
+                        </div>
+                        <div class="text">${msg.text.replace(/[<>]/g, '')}</div>
+                    </div>
+                `).join('');
+                messagesDiv.scrollTop = messagesDiv.scrollHeight;
+            } catch (e) {
+                console.error('Failed to load messages');
+            }
+        }
+
+        async function sendMessage(e) {
+            e.preventDefault();
+            if (!hasName || !currentGroup) {
+                alert('Please enter your name first');
+                return;
+            }
+            const input = document.getElementById('msgInput');
+            const text = input.value.trim();
+            if (!text) return;
+            const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            try {
+                await fetch(`/api/messages/${currentGroup}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ text, timestamp })
+                });
+                input.value = '';
+                loadMessages();
+            } catch (e) {
+                alert('Failed to send message');
+            }
+        }
+
+        // Auto refresh
+        setInterval(loadGroups, 30000);
+        setInterval(() => { if (currentGroup) loadMessages(); }, 3000);
+        
+        // Initial load
+        loadGroups();
+    </script>
 </body>
 </html>
