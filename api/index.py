@@ -7,21 +7,34 @@ import os
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRETKEY', 'your-super-secret-key-change-in-production')
 
+# Force session cookie settings for Vercel/serverless
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+app.config['SESSION_COOKIE_SECURE'] = False  # Set True for HTTPS production
+
 def get_user_data():
     user_data = session.get('user_data')
     if user_data:
-        return json.loads(user_data)
+        try:
+            return json.loads(user_data)
+        except:
+            return {'name': '', 'favorite_groups': []}
     return {'name': '', 'favorite_groups': []}
 
 def save_user_data(user_data):
     session['user_data'] = json.dumps(user_data)
+    session.modified = True  # Force session save
 
 def get_groups():
     groups_data = session.get('groups', '{}')
-    return json.loads(groups_data) if groups_data else {}
+    try:
+        return json.loads(groups_data) if groups_data else {}
+    except:
+        return {}
 
 def save_groups(groups_data):
     session['groups'] = json.dumps(groups_data)
+    session.modified = True  # Force session save
 
 @app.route('/api/set-name', methods=['POST'])
 def set_name():
@@ -33,7 +46,10 @@ def set_name():
     user_data = get_user_data()
     user_data['name'] = name
     save_user_data(user_data)
-    return jsonify({'success': True})
+    
+    resp = make_response(jsonify({'success': True}))
+    resp.set_cookie('session', session.sid, max_age=60*60*24*30)  # 30 days
+    return resp
 
 @app.route('/api/create-group', methods=['POST'])
 def create_group():
@@ -47,7 +63,9 @@ def create_group():
         user_data['favorite_groups'].append(code)
         save_user_data(user_data)
     
-    return jsonify({'code': code, 'invite': f"https://{request.host}/join/{code}"})
+    resp = make_response(jsonify({'code': code, 'invite': f"https://{request.host}/join/{code}"}))
+    resp.set_cookie('session', session.sid, max_age=60*60*24*30)
+    return resp
 
 @app.route('/api/join-group/<code>')
 def join_group(code):
@@ -60,14 +78,18 @@ def join_group(code):
         user_data['favorite_groups'].append(code)
         save_user_data(user_data)
     
-    return jsonify({'success': True, 'code': code})
+    resp = make_response(jsonify({'success': True, 'code': code}))
+    resp.set_cookie('session', session.sid, max_age=60*60*24*30)
+    return resp
 
 @app.route('/api/groups')
 def list_groups():
     user_data = get_user_data()
     groups = get_groups()
-    return jsonify([{'code': code, 'invite': f"https://{request.host}/join/{code}"} 
-                   for code in user_data['favorite_groups'] if code in groups])
+    resp = make_response(jsonify([{'code': code, 'invite': f"https://{request.host}/join/{code}"} 
+                   for code in user_data['favorite_groups'] if code in groups]))
+    resp.set_cookie('session', session.sid, max_age=60*60*24*30)
+    return resp
 
 @app.route('/api/messages/<code>')
 def get_messages(code):
@@ -79,7 +101,9 @@ def get_messages(code):
     for msg in groups[code][-50:]:
         messages_html += f'<div><strong>{msg["user"]}:</strong> {msg["text"]} <small>{msg.get("timestamp", "Now")}</small></div>'
     
-    return jsonify({'html': messages_html})
+    resp = make_response(jsonify({'html': messages_html}))
+    resp.set_cookie('session', session.sid, max_age=60*60*24*30)
+    return resp
 
 @app.route('/api/messages/<code>', methods=['POST'])
 def send_message(code):
@@ -97,11 +121,13 @@ def send_message(code):
     })
     save_groups(groups)
     
-    return jsonify({'status': 'sent'})
+    resp = make_response(jsonify({'status': 'sent'}))
+    resp.set_cookie('session', session.sid, max_age=60*60*24*30)
+    return resp
 
 @app.route('/join/<code>')
 def join_page(code):
-    return f'''
+    resp = make_response(f'''
     <!DOCTYPE html>
     <html>
     <head><title>Join Group</title>
@@ -118,12 +144,13 @@ def join_page(code):
         const name = document.getElementById('nameInput').value.trim();
         if(!name) return alert('Enter a name');
         
-        const res = await fetch('/api/join-group/{code}', {{method:'GET'}});
+        const res = await fetch('/api/join-group/{code}', {{method:'GET', credentials: "same-origin"}});
         if(res.ok) {{
             const joinRes = await fetch('/api/set-name', {{
                 method: 'POST',
                 headers:{{'Content-Type': 'application/json'}},
-                body: JSON.stringify({{name}})
+                body: JSON.stringify({{name}}),
+                credentials: "same-origin"
             }});
             if(joinRes.ok) window.location.href = '/';
         }} else {{
@@ -133,38 +160,19 @@ def join_page(code):
     </script>
     </body>
     </html>
-    '''
+    ''')
+    resp.set_cookie('session', session.sid, max_age=60*60*24*30)
+    return resp
 
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
 def catch_all(path):
-    return '''
+    resp = make_response('''
 <!DOCTYPE html>
 <html>
 <head>
 <title>Private Chat</title>
-<style>
-*{margin:0;padding:0;box-sizing:border-box;}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#000;color:#e0e0e0;height:100vh;overflow:hidden;}
-.container{max-width:600px;margin:0 auto;height:100vh;display:flex;flex-direction:column;}
-.header{padding:20px;background:linear-gradient(135deg,#1a1a1a,#2d2d2d);text-align:center;border-bottom:1px solid #444;}
-.name-screen{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;background:#000;}
-.name-screen input{padding:15px;font-size:18px;border:2px solid #444;background:#1a1a1a;color:#e0e0e0;border-radius:10px;width:80%;max-width:300px;text-align:center;}
-.name-screen button{padding:15px 30px;background:#0a74da;border:none;color:white;border-radius:10px;font-size:16px;cursor:pointer;margin-top:20px;}
-.chat-screen{display:flex;flex-direction:column;}
-.groups{padding:15px;background:#1a1a1a;border-bottom:1px solid #444;}
-.groups select{width:100%;padding:10px;background:#2d2d2d;color:#e0e0e0;border:1px solid #444;border-radius:5px;font-size:14px;}
-.group-info{display:flex;justify-content:space-between;align-items:center;margin-top:10px;font-size:12px;}
-.invite-btn{padding:5px 10px;background:#0a84ff;border:none;color:white;border-radius:5px;cursor:pointer;font-size:11px;}
-.messages{flex:1;overflow-y:auto;padding:20px;background:#0f0f0f;}
-.message{margin-bottom:10px;padding:10px;background:#1a1a1a;border-radius:10px;}
-.input-area{padding:20px;background:#1a1a1a;border-top:1px solid #444;display:flex;gap:10px;}
-.input-area input{flex:1;padding:15px;background:#2d2d2d;color:#e0e0e0;border:1px solid #444;border-radius:20px;font-size:16px;}
-.input-area button{padding:15px 25px;background:#0a74da;border:none;color:white;border-radius:20px;cursor:pointer;font-size:16px;}
-.private{font-style:italic;color:#888;}
-small{color:#888;}
-button:disabled{background:#444;cursor:not-allowed;}
-</style>
+<style>*{margin:0;padding:0;box-sizing:border-box;}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#000;color:#e0e0e0;height:100vh;overflow:hidden;}.container{max-width:600px;margin:0 auto;height:100vh;display:flex;flex-direction:column;}.header{padding:20px;background:linear-gradient(135deg,#1a1a1a,#2d2d2d);text-align:center;border-bottom:1px solid #444;}.name-screen{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;background:#000;}.name-screen input{padding:15px;font-size:18px;border:2px solid #444;background:#1a1a1a;color:#e0e0e0;border-radius:10px;width:80%;max-width:300px;text-align:center;}.name-screen button{padding:15px 30px;background:#0a74da;border:none;color:white;border-radius:10px;font-size:16px;cursor:pointer;margin-top:20px;}.chat-screen{display:flex;flex-direction:column;}.groups{padding:15px;background:#1a1a1a;border-bottom:1px solid #444;}.groups select{width:100%;padding:10px;background:#2d2d2d;color:#e0e0e0;border:1px solid #444;border-radius:5px;font-size:14px;}.group-info{display:flex;justify-content:space-between;align-items:center;margin-top:10px;font-size:12px;}.invite-btn{padding:5px 10px;background:#0a84ff;border:none;color:white;border-radius:5px;cursor:pointer;font-size:11px;}.messages{flex:1;overflow-y:auto;padding:20px;background:#0f0f0f;}.message{margin-bottom:10px;padding:10px;background:#1a1a1a;border-radius:10px;}.input-area{padding:20px;background:#1a1a1a;border-top:1px solid #444;display:flex;gap:10px;}.input-area input{flex:1;padding:15px;background:#2d2d2d;color:#e0e0e0;border:1px solid #444;border-radius:20px;font-size:16px;}.input-area button{padding:15px 25px;background:#0a74da;border:none;color:white;border-radius:20px;cursor:pointer;font-size:16px;}.private{font-style:italic;color:#888;}small{color:#888;}button:disabled{background:#444;cursor:not-allowed;}</style>
 </head>
 <body>
 <div id="name-screen" class="name-screen">
@@ -195,7 +203,7 @@ const userData = {name: '', favoriteGroups: []};
 
 async function init(){
     try{
-        const res = await fetch('/api/groups');
+        const res = await fetch('/api/groups', {credentials: "same-origin"});
         const groups = await res.json();
         updateGroups(groups);
     }catch(e){console.log('No groups yet');}
@@ -210,6 +218,7 @@ async function setName(){
     
     const res = await fetch('/api/set-name', {
         method: 'POST',
+        credentials: "same-origin",
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({name})
     });
@@ -240,9 +249,9 @@ function updateGroupInfo(code, invite){
 }
 
 async function createGroup(){
-    const res = await fetch('/api/create-group', {method: 'POST'});
+    const res = await fetch('/api/create-group', {method: 'POST', credentials: "same-origin"});
     const data = await res.json();
-    const groups = await (await fetch('/api/groups')).json();
+    const groups = await (await fetch('/api/groups', {credentials: "same-origin"})).json();
     updateGroups(groups);
     document.getElementById('groupSelect').value = data.code;
     joinGroup(data.code);
@@ -255,7 +264,7 @@ async function copyInvite(invite){
 
 document.getElementById('groupSelect').onchange = async function(){
     if(this.value) {
-        const groups = await (await fetch('/api/groups')).json();
+        const groups = await (await fetch('/api/groups', {credentials: "same-origin"})).json();
         const group = groups.find(g => g.code === this.value);
         if(group) updateGroupInfo(group.code, group.invite);
         joinGroup(this.value);
@@ -272,7 +281,7 @@ function joinGroup(code){
 
 async function loadMessages(){
     if(!currentGroup) return;
-    const res = await fetch(`/api/messages/${currentGroup}`);
+    const res = await fetch(`/api/messages/${currentGroup}`, {credentials: "same-origin"});
     const data = await res.json();
     document.getElementById('messages').innerHTML = data.html || '<div>No messages yet</div>';
     document.getElementById('messages').scrollTop = document.getElementById('messages').scrollHeight;
@@ -284,6 +293,7 @@ async function sendMessage(){
     
     await fetch(`/api/messages/${currentGroup}`, {
         method: 'POST',
+        credentials: "same-origin",
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({text, timestamp: new Date().toLocaleTimeString()})
     });
@@ -300,7 +310,9 @@ window.onload = init;
 </script>
 </body>
 </html>
-    '''
+    ''')
+    resp.set_cookie('session', session.sid, max_age=60*60*24*30)
+    return resp
 
 if __name__ == '__main__':
     app.run(debug=True)
