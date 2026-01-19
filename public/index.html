@@ -6,17 +6,23 @@
 </head>
 <body>
     <div class="container">
-        <header id="header" style="display: none;">
-            <div id="user-display">Loading...</div>
-            <a href="#" onclick="logout()" class="logout">Logout</a>
-        </header>
-
-        <div id="login-prompt" class="login-prompt">
-            <h2>Please log in to chat</h2>
-            <a href="login.html" class="login-btn">Go to Login</a>
+        <!-- Name Entry Screen -->
+        <div id="name-screen" class="name-screen">
+            <div class="name-container">
+                <h2>Enter Your Name</h2>
+                <input id="nameInput" placeholder="Your name (max 40 chars)" maxlength="40">
+                <button id="setNameBtn">Start Chatting</button>
+                <div id="nameError" class="error"></div>
+            </div>
         </div>
-
+        
+        <!-- Main Chat -->
         <div id="chat-section" class="chat-section" style="display: none;">
+            <header id="header" style="display: flex;">
+                <div id="user-display">Loading...</div>
+                <a href="#" onclick="logout()" class="logout">Logout</a>
+            </header>
+
             <div class="groups-section">
                 <div class="group-controls">
                     <button id="createBtn" onclick="createGroup()" disabled>Create Group</button>
