@@ -7,8 +7,6 @@ import os
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRETKEY', 'your-super-secret-key-change-in-production')
 
-groups = {}
-
 def get_user_data():
     user_data = session.get('user_data')
     if user_data:
@@ -17,6 +15,13 @@ def get_user_data():
 
 def save_user_data(user_data):
     session['user_data'] = json.dumps(user_data)
+
+def get_user_groups():
+    groups_data = session.get('groups', '{}')
+    return json.loads(groups_data) if groups_data else {}
+
+def save_user_groups(groups_data):
+    session['groups'] = json.dumps(groups_data)
 
 @app.route('/api/set-name', methods=['POST'])
 def set_name():
@@ -29,16 +34,21 @@ def set_name():
         return jsonify({'success': True})
     return jsonify({'error': 'Invalid name'}), 400
 
-@app.route('/api/create-group', methods=['GET', 'POST'])
+@app.route('/api/create-group', methods=['POST'])
 def create_group():
-    code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))
-    groups[code] = []
+    user_groups = get_user_groups()
     user_data = get_user_data()
+    
+    code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))
+    user_groups[code] = []  # ← YOUR private messages only
+    save_user_groups(user_groups)
+    
     if 'favorite_groups' not in user_data:
         user_data['favorite_groups'] = []
     if code not in user_data['favorite_groups']:
         user_data['favorite_groups'].append(code)
     save_user_data(user_data)
+    
     return jsonify({'code': code})
 
 @app.route('/api/groups', methods=['GET'])
@@ -48,23 +58,30 @@ def groups_api():
 
 @app.route('/api/messages/<code>', methods=['GET', 'POST'])
 def messages(code):
-    if code not in groups:
-        groups[code] = []
+    user_groups = get_user_groups()
+    
+    # Auto-create if doesn't exist
+    if code not in user_groups:
+        user_groups[code] = []
+        save_user_groups(user_groups)
     
     if request.method == 'POST':
         data = request.get_json() or {}
         user_data = get_user_data()
         username = user_data.get('name', 'Anonymous')
-        groups[code].append({
+        
+        user_groups[code].append({
             'user': username,
             'text': data.get('text', ''),
             'timestamp': data.get('timestamp', 'Now')
         })
+        save_user_groups(user_groups)
         return jsonify({'status': 'sent'})
     
+    # GET: return HTML
     messages_html = ''
-    for msg in groups[code][-50:]:  # Last 50 messages
-        messages_html += f'<div><strong>{msg["user"]}:</strong> {msg["text"]}</div>'
+    for msg in user_groups[code][-50:]:
+        messages_html += f'<div><strong>{msg["user"]}:</strong> <span style="opacity:0.7">{msg["timestamp"]}</span> {msg["text"]}</div>'
     
     return jsonify({'html': messages_html})
 
@@ -73,37 +90,36 @@ def messages(code):
 def catch_all(path):
     return '''
 <!DOCTYPE html>
-<html>
-<head>
-<title>Private Chat</title>
-<style>
-*{margin:0;padding:0;box-sizing:border-box;}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#000;color:#e0e0e0;height:100vh;overflow:hidden;}
+<html><head><title>🔒 Private Chat</title>
+<style>*{margin:0;padding:0;box-sizing:border-box;}
+body{font-family:system-ui;background:#000;color:#e0e0e0;height:100vh;overflow:hidden;}
 .container{max-width:800px;margin:0 auto;height:100vh;display:flex;flex-direction:column;}
-.name-screen{display:flex;flex-direction:column;justify-content:center;align-items:center;height:100vh;background:linear-gradient(135deg,#1a1a1a,#000);}
+.name-screen{display:flex;flex-direction:column;justify-content:center;align-items:center;height:100vh;gap:20px;}
 .chat-screen{display:none;flex-direction:column;height:100vh;}
 .header{background:#111;padding:15px;border-bottom:1px solid #333;display:flex;justify-content:space-between;align-items:center;}
 .groups{flex-grow:1;overflow-x:auto;padding:0 15px;max-width:400px;}
-.group-btn{background:#333;color:#e0e0e0;border:none;padding:8px 12px;margin:2px;border-radius:20px;font-size:12px;cursor:pointer;}
+.group-btn{background:#333;color:#e0e0e0;border:none;padding:8px 12px;margin:2px;border-radius:20px;font-size:12px;cursor:pointer;white-space:nowrap;}
 .group-btn:hover{background:#555;}
 .group-btn.active{background:#007acc;}
 .messages{flex:1;overflow-y:auto;padding:20px 15px;background:#000;}
 .message{margin-bottom:12px;padding:8px;background:#111;border-radius:8px;}
 .message strong{color:#007acc;}
-.input-area{display:flex;padding:15px;background:#111;border-top:1px solid #333;}
+.input-area{display:flex;padding:15px;background:#111;border-top:1px solid #333;gap:10px;}
 #messageInput{flex:1;background:#222;color:#e0e0e0;border:1px solid #444;border-radius:20px;padding:12px 16px;font-size:14px;}
-#sendBtn{background:#007acc;color:white;border:none;border-radius:20px;padding:12px 20px;margin-left:8px;cursor:pointer;font-weight:500;}
+#sendBtn{background:#007acc;color:white;border:none;border-radius:20px;padding:12px 20px;cursor:pointer;font-weight:500;flex-shrink:0;}
 #nameInput{background:#222;color:#e0e0e0;border:1px solid #444;border-radius:8px;padding:20px;font-size:18px;width:300px;max-width:90vw;text-align:center;}
-.btn{background:#007acc;color:white;border:none;border-radius:8px;padding:15px 30px;font-size:16px;cursor:pointer;margin:10px;}
+.btn{background:#007acc;color:white;border:none;border-radius:8px;padding:15px 30px;font-size:16px;cursor:pointer;}
 .btn:hover{background:#005a99;}
-.private::after{content:" (private)";opacity:0.7;font-size:0.8em;}
-</style>
-</head>
+.status{color:#888;font-size:12px;}
+.private::after{content:" 🔒 private";opacity:0.7;font-size:0.8em;}
+</style></head>
 <body>
 <div class="container">
 <div id="name-screen" class="name-screen">
+<h1>🔒 Private Chat</h1>
 <input id="nameInput" placeholder="Enter your name..." maxlength="20">
 <button id="setNameBtn" class="btn">Start Chatting</button>
+<div class="status">Your chats are 100% private to you</div>
 </div>
 <div id="chat-screen" class="chat-screen">
 <div class="header">
@@ -145,7 +161,7 @@ async function loadGroups(){
     list.innerHTML='';
     groups.forEach(code=>{
         const btn=document.createElement('button');
-        btn.className='group-btn';
+        btn.className='group-btn private';
         btn.textContent=code;
         btn.onclick=()=>joinGroup(code);
         list.appendChild(btn);
@@ -153,13 +169,11 @@ async function loadGroups(){
 }
 
 async function createGroup(){
-    const res=await fetch('/api/create-group');
+    const res=await fetch('/api/create-group',{method:'POST',headers:{'Content-Type':'application/json'}});
     const data=await res.json();
     if(data.code){
         loadGroups();
-        joinGroup(data.code);
-    }else{
-        alert('Create failed');
+        setTimeout(()=>joinGroup(data.code),100);
     }
 }
 
@@ -197,13 +211,9 @@ async function sendMessage(){
 document.getElementById('newGroupBtn').onclick=createGroup;
 document.getElementById('sendBtn').onclick=sendMessage;
 document.getElementById('messageInput').addEventListener('keypress',e=>e.key==='Enter'&&sendMessage());
-
 setInterval(loadMessages,2000);
 window.onload=init;
-</script>
-</body>
-</html>
-    '''
+</script></body></html>    '''
 
 if __name__ == '__main__':
     app.run(debug=True)
