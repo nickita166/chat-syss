@@ -31,7 +31,7 @@ def set_name():
     if name and len(name) <= 20:
         user_data = get_user_data()
         user_data['name'] = name
-        session['username'] = name  # For messages
+        session['username'] = name
         save_user_data(user_data)
         return jsonify({'success': True})
     return jsonify({'error': 'Invalid name'}), 400
@@ -105,6 +105,8 @@ body{font-family:system-ui;background:#000;color:#e0e0e0;height:100vh;overflow:h
 .group-btn{background:#333;color:#e0e0e0;border:none;padding:8px 12px;margin:2px;border-radius:20px;font-size:12px;cursor:pointer;white-space:nowrap;}
 .group-btn:hover{background:#555;}
 .group-btn.active{background:#007acc;}
+.copy-btn{background:#666;color:white;border:none;border-radius:50%;width:28px;height:28px;font-size:12px;cursor:pointer;margin-left:4px;display:inline-flex;align-items:center;justify-content:center;}
+.copy-btn:hover{background:#888;}
 .messages{flex:1;overflow-y:auto;padding:20px 15px;background:#000;}
 .message{margin-bottom:12px;padding:8px;background:#111;border-radius:8px;}
 .message strong{color:#007acc;}
@@ -145,7 +147,7 @@ async function init(){
     document.getElementById('setNameBtn').onclick=setName;
     document.getElementById('nameInput').addEventListener('keypress',e=>e.key==='Enter'&&setName());
     document.getElementById('nameInput').focus();
-    loadGroups();  // Load existing groups on startup
+    loadGroups();
 }
 
 async function setName(){
@@ -172,10 +174,38 @@ async function loadGroups(){
             btn.textContent=code;
             btn.onclick=()=>joinGroup(code);
             list.appendChild(btn);
+            
+            const copyBtn=document.createElement('button');
+            copyBtn.className='copy-btn';
+            copyBtn.textContent='📋';
+            copyBtn.title='Copy invite link';
+            copyBtn.onclick=()=>copyInvite(code);
+            list.appendChild(copyBtn);
         });
     }catch(e){
         console.error('Load groups failed');
     }
+}
+
+function copyInvite(code){
+    const inviteUrl=`${window.location.origin}/#${code}`;
+    navigator.clipboard.writeText(inviteUrl).then(()=>{
+        const btn=event.target;
+        const original=btn.textContent;
+        btn.textContent='✅';
+        setTimeout(()=>btn.textContent=original,1000);
+    }).catch(()=>{
+        const textArea=document.createElement('textarea');
+        textArea.value=inviteUrl;
+        document.body.appendChild(textArea);
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+        const btn=event.target;
+        const original=btn.textContent;
+        btn.textContent='✅';
+        setTimeout(()=>btn.textContent=original,1000);
+    });
 }
 
 async function createGroup(){
