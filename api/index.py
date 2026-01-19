@@ -50,39 +50,207 @@ def join_page(code):
     return f'''
 <!DOCTYPE html>
 <html><head><meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"><title>Join {code}</title>
-<style>body{{background:#000;color:#e0e0e0;font-family:sans-serif;padding:20px;text-align:center;}}input{{padding:15px;border:2px solid #444;background:#1a1a1a;color:#e0e0e0;border-radius:10px;width:90%;max-width:300px;font-size:18px;}}button{{padding:15px 30px;background:#0a74da;border:none;color:white;border-radius:10px;font-size:16px;cursor:pointer;}}</style></head>
-<body><h1>Join: <strong>{code}</strong></h1><input id="nameInput" placeholder="Your name"><button onclick="localStorage.setItem('username',document.getElementById('nameInput').value);window.location.href='/'">Join Chat</button>
-<script>if(localStorage.getItem('username'))window.location.href='/';</script></body></html>'''
+<style>body{{background:#000;color:#e0e0e0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;text-align:center;padding:20px;margin:0;}}input{{padding:15px;margin:10px;border:2px solid #444;background:#1a1a1a;color:#e0e0e0;border-radius:10px;width:90%;max-width:300px;font-size:18px;}}button{{padding:15px 30px;background:#0a74da;border:none;color:white;border-radius:10px;cursor:pointer;font-size:16px;}}h1{{font-size:24px;margin:20px 0;}}</style></head>
+<body><h1>Join Group: <strong>{code}</strong></h1><input id="nameInput" placeholder="Enter your name" autocomplete="name"><button onclick="join()">Join Chat</button><script>async function join(){{const name=document.getElementById('nameInput').value.trim();if(!name)return alert('Enter a name');localStorage.setItem('username',name);window.location.href='/';}}if(localStorage.getItem('username'))window.location.href='/';</script></body></html>'''
 
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
 def catch_all(path):
     return '''
 <!DOCTYPE html>
-<html><head><meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"><title>Chat</title>
-<style>*{margin:0;padding:0;box-sizing:border-box;}html{font-size:16px;-webkit-text-size-adjust:none;}body{font-family:sans-serif;background:#000;color:#e0e0e0;height:100vh;overflow:hidden;}.container{max-width:600px;margin:0 auto;height:100vh;display:flex;flex-direction:column;}.header{padding:20px;background:#1a1a1a;text-align:center;border-bottom:1px solid #444;}.name-screen{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;background:#000;}.name-screen input{padding:15px;font-size:18px;border:2px solid #444;background:#1a1a1a;color:#e0e0e0;border-radius:10px;width:90%;max-width:300px;margin:10px 0;}.chat-screen{display:flex;flex-direction:column;height:100vh;}.groups{padding:15px;background:#1a1a1a;border-bottom:1px solid #444;}.groups select{width:100%;padding:12px;background:#2d2d2d;color:#e0e0e0;border:1px solid #444;border-radius:8px;font-size:16px;margin-bottom:10px;}.group-info{display:flex;justify-content:space-between;align-items:center;font-size:14px;}.invite-btn{padding:8px 16px;background:#0a84ff;border:none;color:white;border-radius:6px;cursor:pointer;font-size:13px;}.messages{flex:1;overflow-y:auto;padding:20px;background:#0f0f0f;}.message{margin-bottom:12px;padding:12px;background:#1a1a1a;border-radius:12px;}.input-area{padding:20px;background:#1a1a1a;border-top:1px solid #444;display:flex;gap:10px;}.input-area input{flex:1;padding:15px;background:#2d2d2d;color:#e0e0e0;border:1px solid #444;border-radius:20px;font-size:16px;}.input-area button{padding:15px 25px;background:#0a74da;border:none;color:white;border-radius:20px;cursor:pointer;font-size:16px;}button:disabled{background:#444;}</style></head>
+<html>
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Private Chat</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;}
+html{font-size:16px;-webkit-text-size-adjust:none;}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#000;color:#e0e0e0;height:100vh;overflow:hidden;width:100%;}
+.container{max-width:600px;margin:0 auto;height:100vh;display:flex;flex-direction:column;}
+.header{padding:20px;background:linear-gradient(135deg,#1a1a1a,#2d2d2d);text-align:center;border-bottom:1px solid #444;flex-shrink:0;}
+.name-screen{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;background:#000;padding:20px;}
+.name-screen input{padding:15px;font-size:18px;border:2px solid #444;background:#1a1a1a;color:#e0e0e0;border-radius:10px;width:100%;max-width:300px;text-align:center;margin:10px 0;}
+.name-screen button{padding:15px 30px;background:#0a74da;border:none;color:white;border-radius:10px;font-size:16px;cursor:pointer;}
+.chat-screen{display:flex;flex-direction:column;height:100vh;}
+.groups{padding:15px;background:#1a1a1a;border-bottom:1px solid #444;flex-shrink:0;}
+.groups select{width:100%;padding:12px;background:#2d2d2d;color:#e0e0e0;border:1px solid #444;border-radius:8px;font-size:16px;margin-bottom:10px;}
+.group-info{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;font-size:14px;}
+.invite-btn{padding:8px 16px;background:#0a84ff;border:none;color:white;border-radius:6px;cursor:pointer;font-size:13px;flex-shrink:0;}
+.messages{flex:1;overflow-y:auto;padding:20px;background:#0f0f0f;}
+.message{margin-bottom:12px;padding:12px;background:#1a1a1a;border-radius:12px;word-wrap:break-word;}
+.input-area{padding:20px;background:#1a1a1a;border-top:1px solid #444;display:flex;gap:10px;flex-shrink:0;}
+.input-area input{flex:1;padding:15px;background:#2d2d2d;color:#e0e0e0;border:1px solid #444;border-radius:20px;font-size:16px;}
+.input-area button{padding:15px 25px;background:#0a74da;border:none;color:white;border-radius:20px;cursor:pointer;font-size:16px;flex-shrink:0;}
+.private{font-style:italic;color:#888;}
+small{color:#888;font-size:12px;}
+button:disabled{background:#444;cursor:not-allowed;}
+@media (max-width: 480px) {html{font-size:14px;}.header{padding:15px;}.groups{padding:12px;}.input-area{padding:15px;}}
+</style>
+</head>
 <body>
-<div id="name-screen" class="name-screen"><h1>Private Chat</h1><input id="nameInput" placeholder="Name..." maxlength="20"><button id="setNameBtn">Go</button></div>
-<div id="chat-screen" class="chat-screen" style="display:none;">
-<div class="header"><h2>Groups</h2><div id="currentUser"></div></div>
-<div class="groups"><select id="groupSelect"><option>Loading...</option></select><div id="groupInfo" style="display:none;"></div><button onclick="createGroup()">New Group</button></div>
-<div id="messages" class="messages">Pick a group</div>
-<div class="input-area"><input id="messageInput" placeholder="Message..." disabled><button id="sendBtn" onclick="sendMessage()" disabled>Send</button></div>
+<div id="name-screen" class="name-screen">
+    <h1>Private Chat</h1>
+    <input id="nameInput" placeholder="Enter your name..." maxlength="20" autocomplete="name">
+    <button id="setNameBtn">Continue</button>
 </div>
-<script>
-let currentGroup='',username=localStorage.getItem('username')||'';let nameScreen=document.getElementById('name-screen'),chatScreen=document.getElementById('chat-screen');
-function init(){username?(nameScreen.style.display='none',chatScreen.style.display='flex',document.getElementById('currentUser').textContent=`You: ${username}`,loadGroupsAndMessages()):(nameScreen.style.display='flex',chatScreen.style.display='none');document.getElementById('setNameBtn').onclick=setName;document.getElementById('nameInput').onkeypress=e=>e.key=='Enter'&&setName();document.getElementById('nameInput').focus();}
-function setName(){username=document.getElementById('nameInput').value.trim();username&&(localStorage.setItem('username',username),nameScreen.style.display='none',chatScreen.style.display='flex',document.getElementById('currentUser').textContent=`You: ${username}`,loadGroupsAndMessages());}
-async function loadGroupsAndMessages(){await loadGroups();if(currentGroup)loadMessages();}
-async function loadGroups(){try{const res=await fetch('/api/groups'),groups=await res.json();document.getElementById('groupSelect').innerHTML=groups.map(g=>`<option value="${g}">${g}</option>`).join('')||'<option>Create a group!</option>'}catch(e){console.error(e)}}
-async function loadMessages(){if(!currentGroup)return;try{const res=await fetch(`/api/messages/${currentGroup}`),data=await res.json();document.getElementById('messages').innerHTML=data.html;document.getElementById('messages').scrollTop=document.getElementById('messages').scrollHeight}catch(e){console.error(e)}}
-function updateGroupInfo(code){document.getElementById('groupInfo').style.display='flex';document.getElementById('groupInfo').innerHTML=`<div class="group-info"><span>${code}</span><button class="invite-btn" onclick="copyInvite('${window.location.origin}/join/${code}')">📋 Copy</button></div>`;}
-async function createGroup(){try{const res=await fetch('/api/create-group',{method:'POST'}),data=await res.json();await loadGroups();document.getElementById('groupSelect').value=data.code;document.getElementById('groupSelect').dispatchEvent(new Event('change'))}catch(e){alert('Error')}}
-function copyInvite(invite){navigator.clipboard.writeText(invite).then(()=>alert('Copied!')).catch(()=>prompt('Copy:',invite));}
-document.getElementById('groupSelect').onchange=e=>{const val=e.target.value;val?(updateGroupInfo(val),currentGroup=val,document.getElementById('messageInput').disabled=document.getElementById('sendBtn').disabled=false,loadMessages()):(document.getElementById('groupInfo').style.display='none',currentGroup='',document.getElementById('messageInput').disabled=document.getElementById('sendBtn').disabled=true)};
-async function sendMessage(){const text=document.getElementById('messageInput').value.trim();if(!text||!currentGroup||!username)return;const btn=document.getElementById('sendBtn');btn.disabled=true;btn.textContent='Sending...';try{await fetch(`/api/messages/${currentGroup}`,{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{text,user:username,timestamp:new Date().toLocaleTimeString()}})}});document.getElementById('messageInput').value='';loadMessages()}finally{btn.disabled=false;btn.textContent='Send';document.getElementById('messageInput').focus()}}
-document.getElementById('messageInput').onkeypress=e=>e.key=='Enter'&&sendMessage();setInterval(loadMessages,2500);window.onload=init;
-</script></body></html>'''
+<div id="chat-screen" class="chat-screen" style="display:none;">
+    <div class="header">
+        <h2>Private Groups</h2>
+        <div id="currentUser"></div>
+    </div>
+    <div class="groups">
+        <select id="groupSelect"><option>Loading groups...</option></select>
+        <div id="groupInfo" style="display:none;"></div>
+        <button onclick="createGroup()">New Private Group</button>
+    </div>
+    <div id="messages" class="messages">Select a group to start chatting</div>
+    <div class="input-area">
+        <input id="messageInput" placeholder="Type a message..." disabled>
+        <button id="sendBtn" onclick="sendMessage()" disabled>Send</button>
+    </div>
+</div>
 
-if __name__=='__main__':
+<script>
+let currentGroup = '';
+let username = localStorage.getItem('username') || '';
+
+function init() {
+    const nameScreen = document.getElementById('name-screen');
+    const chatScreen = document.getElementById('chat-screen');
+    
+    if (username) {
+        nameScreen.style.display = 'none';
+        chatScreen.style.display = 'flex';
+        document.getElementById('currentUser').textContent = `Logged in as: ${username}`;
+        loadGroups();
+        setTimeout(() => {
+            if (document.getElementById('groupSelect').options.length > 1) {
+                document.getElementById('groupSelect').selectedIndex = 1;
+                document.getElementById('groupSelect').onchange();
+            }
+        }, 1000);
+        setInterval(loadMessages, 2000);
+    } else {
+        nameScreen.style.display = 'flex';
+        chatScreen.style.display = 'none';
+    }
+    
+    document.getElementById('setNameBtn').onclick = setName;
+    document.getElementById('nameInput').addEventListener('keypress', e => {
+        if (e.key === 'Enter') setName();
+    });
+    document.getElementById('nameInput').focus();
+}
+
+function setName() {
+    username = document.getElementById('nameInput').value.trim();
+    if (username) {
+        localStorage.setItem('username', username);
+        document.getElementById('name-screen').style.display = 'none';
+        document.getElementById('chat-screen').style.display = 'flex';
+        document.getElementById('currentUser').textContent = `Logged in as: ${username}`;
+        loadGroups();
+    }
+}
+
+async function loadGroups() {
+    try {
+        const res = await fetch('/api/groups');
+        const groups = await res.json();
+        const select = document.getElementById('groupSelect');
+        if (groups.length === 0) {
+            select.innerHTML = '<option>No groups - create one!</option>';
+        } else {
+            select.innerHTML = groups.map(g => `<option value="${g}">${g}</option>`).join('');
+        }
+    } catch(e) {
+        console.error('Groups load error:', e);
+    }
+}
+
+function updateGroupInfo(code) {
+    document.getElementById('groupInfo').style.display = 'flex';
+    document.getElementById('groupInfo').innerHTML = `
+        <div class="group-info">
+            <span>${code} <span class="private">(private)</span></span>
+            <button class="invite-btn" onclick="copyInvite('${window.location.origin}/join/${code}')">📋 Copy Invite</button>
+        </div>
+    `;
+}
+
+async function createGroup() {
+    try {
+        const res = await fetch('/api/create-group', {method: 'POST'});
+        const data = await res.json();
+        await loadGroups();
+        document.getElementById('groupSelect').value = data.code;
+        document.getElementById('groupSelect').onchange();
+    } catch(e) {
+        alert('Error creating group');
+    }
+}
+
+function copyInvite(invite) {
+    navigator.clipboard.writeText(invite).then(() => {
+        alert('Invite copied!');
+    }).catch(() => {
+        prompt('Copy this:', invite);
+    });
+}
+
+document.getElementById('groupSelect').onchange = function() {
+    if (this.value) {
+        currentGroup = this.value;
+        updateGroupInfo(this.value);
+        document.getElementById('messageInput').disabled = false;
+        document.getElementById('sendBtn').disabled = false;
+        document.getElementById('messageInput').focus();
+        loadMessages();
+    } else {
+        document.getElementById('groupInfo').style.display = 'none';
+        document.getElementById('messageInput').disabled = true;
+        document.getElementById('sendBtn').disabled = true;
+        currentGroup = '';
+    }
+};
+
+async function loadMessages() {
+    if (!currentGroup) return;
+    try {
+        const res = await fetch(`/api/messages/${currentGroup}`);
+        const data = await res.json();
+        document.getElementById('messages').innerHTML = data.html;
+        document.getElementById('messages').scrollTop = document.getElementById('messages').scrollHeight;
+    } catch(e) {
+        console.error('Messages error:', e);
+    }
+}
+
+async function sendMessage() {
+    const text = document.getElementById('messageInput').value.trim();
+    if (!text || !currentGroup || !username) return;
+    
+    try {
+        await fetch(`/api/messages/${currentGroup}`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({text, user: username, timestamp: new Date().toLocaleTimeString()})
+        });
+        document.getElementById('messageInput').value = '';
+        loadMessages();
+    } catch(e) {
+        alert('Send failed');
+    }
+}
+
+document.getElementById('messageInput').addEventListener('keypress', e => {
+    if (e.key === 'Enter') sendMessage();
+});
+
+window.onload = init;
+</script>
+</body>
+</html>'''
+
+if __name__ == '__main__':
     app.run(debug=True)
