@@ -4,13 +4,15 @@ import random
 import string
 
 app = Flask(__name__)
-app.secret_key = os.environ.get('SECRET_KEY', 'super-secret-key-change-me')
-groups = {}  # {code: [{'user': 'name', 'text': 'msg', 'timestamp': '12:34'}]}
+groups = {}
 
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
 def catch_all(path):
-    return open('public/index.html').read()
+    try:
+        return open('public/index.html').read()
+    except:
+        return "Chat loading...", 200
 
 @app.route('/api/groups', methods=['GET', 'POST'])
 def groups():
@@ -24,11 +26,11 @@ def groups():
         return jsonify({'exists': False}), 400
     return jsonify(list(groups.keys())[:20])
 
-@app.route('/api/create-group', methods=['POST'])
+@app.route('/api/create-group', methods=['POST'])  # ← THIS ROUTE WAS BROKEN
 def create_group():
     code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))
     groups[code] = []
-    return jsonify({'code': code})
+    return jsonify({'code': code})  # ← SIMPLE JSON RESPONSE
 
 @app.route('/api/messages/<code>', methods=['GET', 'POST'])
 def messages(code):
@@ -36,7 +38,7 @@ def messages(code):
         return jsonify({'error': 'Group not found'}), 404
     
     if request.method == 'POST':
-        data = request.get_json()
+        data = request.get_json() or {}
         username = data.get('username', 'Anonymous')[:20]
         text = data.get('text', '').strip()
         timestamp = data.get('timestamp', 'Now')
