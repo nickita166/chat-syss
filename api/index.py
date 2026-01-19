@@ -47,20 +47,33 @@ def create_group():
         user_data['favorite_groups'].append(code)
         save_user_data(user_data)
     
-    return jsonify({'code': code})
+    return jsonify({'code': code, 'invite': f"https://{request.host}/join/{code}"})
+
+@app.route('/api/join-group/<code>')
+def join_group(code):
+    groups = get_groups()
+    if code not in groups:
+        return jsonify({'error': 'Group not found'}), 404
+    
+    user_data = get_user_data()
+    if code not in user_data['favorite_groups']:
+        user_data['favorite_groups'].append(code)
+        save_user_data(user_data)
+    
+    return jsonify({'success': True, 'code': code})
 
 @app.route('/api/groups')
 def list_groups():
     user_data = get_user_data()
     groups = get_groups()
-    return jsonify([{'code': code, 'private': True} for code in user_data['favorite_groups'] if code in groups])
+    return jsonify([{'code': code, 'invite': f"https://{request.host}/join/{code}"} 
+                   for code in user_data['favorite_groups'] if code in groups])
 
 @app.route('/api/messages/<code>')
 def get_messages(code):
     groups = get_groups()
     if code not in groups:
-        groups[code] = []
-        save_groups(groups)
+        return jsonify({'html': '<div>No messages yet</div>'})
     
     messages_html = ''
     for msg in groups[code][-50:]:
@@ -75,7 +88,7 @@ def send_message(code):
     
     groups = get_groups()
     if code not in groups:
-        groups[code] = []
+        return jsonify({'error': 'Group not found'}), 404
     
     groups[code].append({
         'user': user,
@@ -85,6 +98,42 @@ def send_message(code):
     save_groups(groups)
     
     return jsonify({'status': 'sent'})
+
+@app.route('/join/<code>')
+def join_page(code):
+    return f'''
+    <!DOCTYPE html>
+    <html>
+    <head><title>Join Group</title>
+    <style>body{{background:#000;color:#e0e0e0;font-family:sans-serif;text-align:center;padding:50px;}}
+    input{{padding:15px;margin:10px;border:2px solid #444;background:#1a1a1a;color:#e0e0e0;border-radius:10px;}}
+    button{{padding:15px 30px;background:#0a74da;border:none;color:white;border-radius:10px;cursor:pointer;}}</style>
+    </head>
+    <body>
+    <h1>Join Group: <strong>{code}</strong></h1>
+    <input id="nameInput" placeholder="Enter your name">
+    <button onclick="join()">Join Chat</button>
+    <script>
+    async function join() {{
+        const name = document.getElementById('nameInput').value.trim();
+        if(!name) return alert('Enter a name');
+        
+        const res = await fetch('/api/join-group/{code}', {{method:'GET'}});
+        if(res.ok) {{
+            const joinRes = await fetch('/api/set-name', {{
+                method: 'POST',
+                headers:{{'Content-Type': 'application/json'}},
+                body: JSON.stringify({{name}})
+            }});
+            if(joinRes.ok) window.location.href = '/';
+        }} else {{
+            alert('Group not found');
+        }}
+    }}
+    </script>
+    </body>
+    </html>
+    '''
 
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
@@ -105,6 +154,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .chat-screen{display:flex;flex-direction:column;}
 .groups{padding:15px;background:#1a1a1a;border-bottom:1px solid #444;}
 .groups select{width:100%;padding:10px;background:#2d2d2d;color:#e0e0e0;border:1px solid #444;border-radius:5px;font-size:14px;}
+.group-info{display:flex;justify-content:space-between;align-items:center;margin-top:10px;font-size:12px;}
+.invite-btn{padding:5px 10px;background:#0a84ff;border:none;color:white;border-radius:5px;cursor:pointer;font-size:11px;}
 .messages{flex:1;overflow-y:auto;padding:20px;background:#0f0f0f;}
 .message{margin-bottom:10px;padding:10px;background:#1a1a1a;border-radius:10px;}
 .input-area{padding:20px;background:#1a1a1a;border-top:1px solid #444;display:flex;gap:10px;}
@@ -128,6 +179,7 @@ button:disabled{background:#444;cursor:not-allowed;}
     </div>
     <div class="groups">
         <select id="groupSelect"><option>No groups yet</option></select>
+        <div id="groupInfo"></div>
         <button onclick="createGroup()">New Private Group</button>
     </div>
     <div id="messages" class="messages"></div>
@@ -174,7 +226,17 @@ async function setName(){
 
 function updateGroups(groups){
     const select = document.getElementById('groupSelect');
-    select.innerHTML = groups.map(g => `<option value="${g.code}">${g.code} <span class="private">(private)</span></option>`).join('') || '<option>No groups yet</option>';
+    select.innerHTML = groups.map(g => `<option value="${g.code}">${g.code}</option>`).join('') || '<option>No groups yet</option>';
+    if(groups.length > 0) document.getElementById('groupSelect').onchange();
+}
+
+function updateGroupInfo(code, invite){
+    document.getElementById('groupInfo').innerHTML = `
+        <div class="group-info">
+            <span>${code} <span class="private">(private)</span></span>
+            <button class="invite-btn" onclick="copyInvite('${invite}')">Copy Invite</button>
+        </div>
+    `;
 }
 
 async function createGroup(){
@@ -186,8 +248,18 @@ async function createGroup(){
     joinGroup(data.code);
 }
 
-document.getElementById('groupSelect').onchange = function(){
-    if(this.value) joinGroup(this.value);
+async function copyInvite(invite){
+    await navigator.clipboard.writeText(invite);
+    alert('Invite copied!');
+}
+
+document.getElementById('groupSelect').onchange = async function(){
+    if(this.value) {
+        const groups = await (await fetch('/api/groups')).json();
+        const group = groups.find(g => g.code === this.value);
+        if(group) updateGroupInfo(group.code, group.invite);
+        joinGroup(this.value);
+    }
 };
 
 function joinGroup(code){
@@ -202,7 +274,7 @@ async function loadMessages(){
     if(!currentGroup) return;
     const res = await fetch(`/api/messages/${currentGroup}`);
     const data = await res.json();
-    document.getElementById('messages').innerHTML = data.html;
+    document.getElementById('messages').innerHTML = data.html || '<div>No messages yet</div>';
     document.getElementById('messages').scrollTop = document.getElementById('messages').scrollHeight;
 }
 
