@@ -40,7 +40,7 @@ def create_group():
     user_data = get_user_data()
     
     code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))
-    user_groups[code] = []  # ← YOUR private messages only
+    user_groups[code] = []
     save_user_groups(user_groups)
     
     if 'favorite_groups' not in user_data:
@@ -60,7 +60,6 @@ def groups_api():
 def messages(code):
     user_groups = get_user_groups()
     
-    # Auto-create if doesn't exist
     if code not in user_groups:
         user_groups[code] = []
         save_user_groups(user_groups)
@@ -78,10 +77,9 @@ def messages(code):
         save_user_groups(user_groups)
         return jsonify({'status': 'sent'})
     
-    # GET: return HTML
     messages_html = ''
     for msg in user_groups[code][-50:]:
-        messages_html += f'<div><strong>{msg["user"]}:</strong> <span style="opacity:0.7">{msg["timestamp"]}</span> {msg["text"]}</div>'
+        messages_html += f'<div class="message"><strong>{msg["user"]}:</strong> <span style="opacity:0.7">{msg["timestamp"]}</span> {msg["text"]}</div>'
     
     return jsonify({'html': messages_html})
 
@@ -148,72 +146,4 @@ async function setName(){
     if(!user)return;
     const res=await fetch('/api/set-name',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:user})});
     if(res.ok){
-        document.getElementById('name-screen').style.display='none';
-        document.getElementById('chat-screen').style.display='flex';
-        loadGroups();
-    }
-}
-
-async function loadGroups(){
-    const res=await fetch('/api/groups');
-    groups=await res.json();
-    const list=document.getElementById('groupsList');
-    list.innerHTML='';
-    groups.forEach(code=>{
-        const btn=document.createElement('button');
-        btn.className='group-btn private';
-        btn.textContent=code;
-        btn.onclick=()=>joinGroup(code);
-        list.appendChild(btn);
-    });
-}
-
-async function createGroup(){
-    const res=await fetch('/api/create-group',{method:'POST',headers:{'Content-Type':'application/json'}});
-    const data=await res.json();
-    if(data.code){
-        loadGroups();
-        setTimeout(()=>joinGroup(data.code),100);
-    }
-}
-
-async function joinGroup(code){
-    currentGroup=code;
-    document.querySelectorAll('.group-btn').forEach(btn=>btn.classList.remove('active'));
-    event?.target?.classList.add('active');
-    document.getElementById('messageInput').disabled=false;
-    document.getElementById('sendBtn').disabled=false;
-    document.getElementById('messageInput').focus();
-    loadMessages();
-}
-
-async function loadMessages(){
-    if(!currentGroup)return;
-    const res=await fetch(`/api/messages/${currentGroup}`);
-    const data=await res.json();
-    document.getElementById('messages').innerHTML=data.html||'No messages yet';
-    document.getElementById('messages').scrollTop=document.getElementById('messages').scrollHeight;
-}
-
-async function sendMessage(){
-    if(!currentGroup)return;
-    const text=document.getElementById('messageInput').value.trim();
-    if(!text)return;
-    await fetch(`/api/messages/${currentGroup}`,{
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({text,timestamp:new Date().toLocaleTimeString()})
-    });
-    document.getElementById('messageInput').value='';
-    loadMessages();
-}
-
-document.getElementById('newGroupBtn').onclick=createGroup;
-document.getElementById('sendBtn').onclick=sendMessage;
-document.getElementById('messageInput').addEventListener('keypress',e=>e.key==='Enter'&&sendMessage());
-setInterval(loadMessages,2000);
-window.onload=init;
-</script></body></html>    '''
-
-if __name__ == '__main__':
-    app.run(debug=True)
+        document.getElementById('name-screen
