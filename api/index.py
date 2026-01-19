@@ -7,9 +7,6 @@ from collections import defaultdict
 
 app = Flask(__name__)
 
-# SHARED ACROSS ALL USERS (not private per-user anymore)
-SHARED_GROUPS = defaultdict(list)
-
 @app.route('/api/set-name', methods=['POST'])
 def set_name():
     data = request.get_json()
@@ -21,18 +18,21 @@ def set_name():
 @app.route('/api/create-group', methods=['POST'])
 def create_group():
     code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))
-    SHARED_GROUPS[code] = []
     return jsonify({'code': code, 'invite': f"{request.host}/join/{code}"})
 
 @app.route('/api/join-group/<code>')
 def join_group(code):
-    if code not in SHARED_GROUPS:
-        SHARED_GROUPS[code] = []
     return jsonify({'status': 'joined', 'code': code})
 
 @app.route('/api/messages/<code>')
 def get_messages(code):
-    messages = SHARED_GROUPS.get(code, [])[-50:]
+    # Get messages from client-side localStorage via header
+    messages_json = request.headers.get('X-Messages-' + code, '[]')
+    try:
+        messages = json.loads(messages_json)[-50:]
+    except:
+        messages = []
+    
     messages_html = ''
     for msg in messages:
         time_str = datetime.fromisoformat(msg['timestamp']).strftime('%I:%M:%S %p')
@@ -45,15 +45,14 @@ def send_message(code):
     text = data.get('text', '').strip()[:200]
     username = data.get('username', 'Anonymous')
     
-    if text and code in SHARED_GROUPS:
+    if text:
         msg = {
             'username': username,
             'text': text,
             'timestamp': datetime.now().isoformat()
         }
-        SHARED_GROUPS[code].append(msg)
-    
-    return jsonify({'status': 'sent'})
+        return jsonify({'status': 'sent', 'message': msg})
+    return jsonify({'status': 'empty'})
 
 @app.route('/join/<code>')
 def join_page(code):
@@ -74,7 +73,7 @@ def catch_all(path):
 <!DOCTYPE html>
 <html>
 <head>
-    <title>🔒 Private Chat</title>
+    <title>🔒 Chat</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <style>
         *{margin:0;padding:0;box-sizing:border-box;font-family:Arial,sans-serif;font-size:16px;}
@@ -130,10 +129,16 @@ def catch_all(path):
     <script>
         let currentGroup = '';
         let username = localStorage.getItem('chat_username') || '';
+        
+        // LOAD USER GROUPS FROM LOCALSTORAGE
+        let userGroups = JSON.parse(localStorage.getItem('chat_groups') || '{}');
 
         // AUTO-JOIN FROM INVITE
-        if (window.groupCode || new URLSearchParams(window.location.hash.substring(1)).get('join')) {
-            joinFromInvite(window.groupCode || new URLSearchParams(window.location.hash.substring(1)).get('join'));
+        if (window.groupCode) {
+            const code = window.groupCode;
+            userGroups[code] = userGroups[code] || [];
+            localStorage.setItem('chat_groups', JSON.stringify(userGroups));
+            joinFromInvite(code);
         } else {
             init();
         }
@@ -141,7 +146,7 @@ def catch_all(path):
         function joinFromInvite(code) {
             document.getElementById('nameScreen').style.display = 'none';
             document.getElementById('chatScreen').style.display = 'flex';
-            document.getElementById('nameDisplay').textContent = username + ' (joined ' + code + ') ';
+            document.getElementById('nameDisplay').textContent = username + ' ';
             currentGroup = code;
             updateGroupInfo(code);
             setInterval(loadMessages, 2000);
@@ -149,12 +154,16 @@ def catch_all(path):
 
         function init(){
             if (username) {
-                // NAME ALREADY SAVED - SKIP NAME SCREEN
+                // NAME SAVED - SHOW GROUPS
                 document.getElementById('nameScreen').style.display = 'none';
                 document.getElementById('chatScreen').style.display = 'flex';
                 document.getElementById('nameDisplay').textContent = username + ' ';
                 loadGroups();
-                setInterval(loadMessages, 2000);
+                if(currentGroup) loadMessages();
+                setInterval(() => {
+                    if(currentGroup) loadMessages();
+                    saveGroups(); // AUTO-SAVE GROUPS
+                }, 2000);
             } else {
                 document.getElementById('setNameBtn').onclick = setName;
                 document.getElementById('nameInput').addEventListener('keypress', e => e.key === 'Enter' && setName());
@@ -165,7 +174,7 @@ def catch_all(path):
         function setName(){
             username = document.getElementById('nameInput').value.trim();
             if(!username) return;
-            localStorage.setItem('chat_username', username);  // SAVED FOREVER
+            localStorage.setItem('chat_username', username);
             document.getElementById('nameScreen').style.display = 'none';
             document.getElementById('chatScreen').style.display = 'flex';
             document.getElementById('nameDisplay').textContent = username + ' ';
@@ -173,20 +182,27 @@ def catch_all(path):
             setInterval(loadMessages, 2000);
         }
 
-        async function loadGroups(){
+        function loadGroups(){
             const select = document.getElementById('groupSelect');
             select.innerHTML = '<option>Select group or create new</option>';
-            if(currentGroup){
+            
+            Object.keys(userGroups).forEach(code => {
                 const option = document.createElement('option');
-                option.value = currentGroup;
-                option.textContent = currentGroup;
+                option.value = code;
+                option.textContent = code;
                 select.appendChild(option);
+            });
+            
+            if(Object.keys(userGroups).length > 0 && !currentGroup){
+                currentGroup = Object.keys(userGroups)[0];
                 select.value = currentGroup;
+                updateGroupInfo(currentGroup);
             }
         }
 
         function updateGroupInfo(code){
             currentGroup = code;
+            document.getElementById('groupInfo').style.display = 'flex';
             document.getElementById('groupInfo').innerHTML = 
                 `<div class="group-info">
                     <span>${code}</span>
@@ -195,12 +211,19 @@ def catch_all(path):
             loadMessages();
         }
 
+        function saveGroups(){
+            localStorage.setItem('chat_groups', JSON.stringify(userGroups));
+        }
+
         async function createGroup(){
             const res = await fetch('/api/create-group', {method: 'POST'});
             const data = await res.json();
+            const code = data.code;
+            userGroups[code] = userGroups[code] || [];
+            saveGroups();
             loadGroups();
-            document.getElementById('groupSelect').value = data.code;
-            updateGroupInfo(data.code);
+            document.getElementById('groupSelect').value = code;
+            updateGroupInfo(code);
         }
 
         async function copyInvite(code){
@@ -215,7 +238,10 @@ def catch_all(path):
         async function loadMessages(){
             if(!currentGroup) return;
             try {
-                const res = await fetch(`/api/messages/${currentGroup}`);
+                const messages = userGroups[currentGroup] || [];
+                const res = await fetch(`/api/messages/${currentGroup}`, {
+                    headers: {{'X-Messages-' + currentGroup: JSON.stringify(messages)}}
+                });
                 const data = await res.json();
                 document.getElementById('messages').innerHTML = data.html || '<div style="opacity:0.5;text-align:center;padding:20px;">No messages yet</div>';
                 document.getElementById('messages').scrollTop = document.getElementById('messages').scrollHeight;
@@ -231,17 +257,25 @@ def catch_all(path):
             input.disabled = true;
             input.value = 'Sending...';
             
-            await fetch(`/api/send-message/${currentGroup}`, {
+            const res = await fetch(`/api/send-message/${currentGroup}`, {
                 method: 'POST',
-                headers: {'Content-Type': 'application/json'},
+                headers: {{'Content-Type': 'application/json'}},
                 body: JSON.stringify({text, username})
             });
+            const data = await res.json();
+            
+            if(data.status === 'sent' && data.message){
+                if(!userGroups[currentGroup]) userGroups[currentGroup] = [];
+                userGroups[currentGroup].push(data.message);
+                saveGroups();
+            }
             
             input.value = '';
             input.disabled = false;
             loadMessages();
         }
 
+        // EVENT LISTENERS
         document.getElementById('newGroupBtn').onclick = createGroup;
         document.getElementById('sendBtn').onclick = sendMessage;
         document.getElementById('groupSelect').onchange = function(){
