@@ -5,22 +5,22 @@ import string
 import json
 import os
 from datetime import datetime
+from urllib.parse import urlparse
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRETKEY', 'your-super-secret-key-change-in-production')
 
-# In-memory storage (Vercel serverless resets, but sessions persist user data)
 groups = defaultdict(list)
 
 def get_user_data():
     user_data = session.get('user_data')
     if user_data:
         return json.loads(user_data)
-    return {'name': '', 'favorite_groups': []}
+    return {'name': '', 'favorite_groups': [], 'current_group': ''}
 
 def save_user_data(user_data):
     session['user_data'] = json.dumps(user_data)
-    session.permanent = True  # Persist across sessions
+    session.permanent = True
 
 @app.after_request
 def after_request(response):
@@ -54,6 +54,7 @@ def catch_all(path):
         .msg strong{color:#0f0;}
         .private{font-size:12px;color:#888;}
         #goBtn{display:none;}
+        .joined-ind{ color:#0f0; font-size:12px; }
     </style>
 </head>
 <body>
@@ -64,8 +65,9 @@ def catch_all(path):
         </div>
         <div id="groupSection">
             <select id="groupSelect"><option>Your private groups</option></select>
-            <br><button id="copyInvite" onclick="copyInvite()">Copy Invite Link</button>
+            <br><button id="copyInvite" onclick="copyInvite()" style="display:none;">Copy Invite Link</button>
             <br><button onclick="createGroup()">New Private Group</button>
+            <div id="joinStatus"></div>
         </div>
         <div id="chatSection">
             <div id="messages"></div>
@@ -78,8 +80,22 @@ def catch_all(path):
         let userName = '';
 
         function init() {
+            // Check for invite link #GROUP_CODE
+            const hash = window.location.hash.slice(1);
+            if (hash && hash.match(/^[A-Z0-9]{10}$/)) {
+                currentGroup = hash;
+                document.getElementById('joinStatus').innerHTML = `<span class="joined-ind">✅ Joined group ${currentGroup}</span>`;
+            }
+            
             fetchName().then(() => {
-                if (userName) showGroups(); else showName();
+                if (userName) {
+                    showGroups();
+                    if (currentGroup) {
+                        joinGroupDirect(currentGroup);
+                    }
+                } else {
+                    showName();
+                }
             });
             setInterval(loadMessages, 2000);
         }
@@ -89,7 +105,6 @@ def catch_all(path):
             const data = await res.json();
             userName = data.name;
             currentGroup = data.currentGroup || '';
-            if (currentGroup) loadGroups().then(showChat);
         }
 
         async function saveName() {
@@ -114,6 +129,10 @@ def catch_all(path):
                 opt.textContent = `${g.code} ${g.private ? '(private)' : ''}`;
                 select.appendChild(opt);
             });
+            if (currentGroup) {
+                select.value = currentGroup;
+                document.getElementById('copyInvite').style.display = 'block';
+            }
         }
 
         function showName() { document.getElementById('nameSection').style.display = 'block'; }
@@ -121,11 +140,20 @@ def catch_all(path):
             document.getElementById('groupSection').style.display = 'block';
             loadGroups();
         }
+        
+        async function joinGroupDirect(code) {
+            currentGroup = code;
+            await saveUserData();
+            document.getElementById('groupSelect').value = code;
+            document.getElementById('copyInvite').style.display = 'block';
+            showChat();
+        }
+
         function showChat() {
             document.getElementById('chatSection').style.display = 'flex';
+            document.getElementById('groupSection').style.display = 'none';
             document.getElementById('messageInput').disabled = false;
             document.getElementById('sendBtn').disabled = false;
-            document.getElementById('groupSelect').onchange = joinGroup;
             loadMessages();
         }
 
@@ -136,6 +164,7 @@ def catch_all(path):
             await saveUserData();
             await loadGroups();
             document.getElementById('groupSelect').value = data.code;
+            document.getElementById('copyInvite').style.display = 'block';
             showChat();
         }
 
@@ -144,16 +173,19 @@ def catch_all(path):
             if (code) {
                 currentGroup = code;
                 await saveUserData();
-                loadMessages();
+                showChat();
             }
         }
 
         function copyInvite() {
             const code = currentGroup;
             if (code) {
-                navigator.clipboard.writeText(`https://${window.location.host}/#${code}`);
+                const inviteUrl = `${window.location.origin}/#${code}`;
+                navigator.clipboard.writeText(inviteUrl);
                 document.getElementById('copyInvite').textContent = 'Copied!';
-                setTimeout(() => document.getElementById('copyInvite').textContent = 'Copy Invite Link', 2000);
+                setTimeout(() => {
+                    document.getElementById('copyInvite').textContent = 'Copy Invite Link';
+                }, 2000);
             }
         }
 
@@ -197,6 +229,7 @@ def catch_all(path):
 </html>
     '''
 
+# API endpoints (unchanged)
 @app.route('/api/user')
 def get_user():
     data = get_user_data()
@@ -214,7 +247,6 @@ def save_user():
 @app.route('/api/groups')
 def get_groups():
     data = get_user_data()
-    # Simulate user's private groups
     user_groups = data.get('favorite_groups', [])
     resp = make_response(jsonify({'groups': [{'code': g, 'private': True} for g in user_groups[:10]]}))
     return resp
