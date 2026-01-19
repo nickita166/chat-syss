@@ -5,7 +5,6 @@ import string
 import json
 import os
 from datetime import datetime
-from urllib.parse import urlparse
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRETKEY', 'your-super-secret-key-change-in-production')
@@ -39,24 +38,26 @@ def catch_all(path):
 <head>
     <title>🔒 Private Chat</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <meta name="apple-mobile-web-app-capable" content="yes">
     <style>
         *{margin:0;padding:0;box-sizing:border-box;font-family:Arial,sans-serif;background:#000;color:#e0e0e0;}
         body{height:100vh;overflow:hidden;}
         .container{max-width:480px;margin:0 auto;height:100vh;display:flex;flex-direction:column;padding:10px;}
-        input,button{font-size:16px;padding:12px;border:1px solid #333;border-radius:8px;background:#111;color:#e0e0e0;}
-        button{cursor:pointer;background:#222;}
+        input,button,select{font-size:16px;padding:12px;border:1px solid #333;border-radius:8px;background:#111;color:#e0e0e0;}
+        button{cursor:pointer;background:#222;margin:5px 0;}
         button:active{background:#444;}
-        button.enabled{background:#0f0;}
-        #nameSection,#groupSection{display:none;}
-        #chatSection{display:none;flex-direction:column;height:100%;}
-        #messages{max-height:50vh;overflow-y:auto;padding:10px;border:1px solid #333;margin:10px 0;}
+        button.enabled{background:#0f0;color:#000;}
+        #nameSection{display:none;}
+        #mainUI{display:flex;flex-direction:column;height:100%;gap:10px;}
+        #groupControls{display:flex;flex-direction:column;gap:10px;padding:10px;border:1px solid #333;}
+        #groupSelect{width:100%;}
+        #messages{max-height:55vh;overflow-y:auto;padding:10px;border:1px solid #333;}
         .msg{display:flex;margin:5px 0;flex-wrap:wrap;}
         .msg strong{color:#0f0;}
-        .private{font-size:12px;color:#888;}
+        .time{color:#888;font-size:12px;}
         .joined-ind{color:#0f0;font-size:12px;}
         #inputRow{display:flex;gap:10px;align-items:end;}
         #messageInput{flex:1;}
+        .group-header{display:flex;justify-content:space-between;align-items:center;padding:10px;background:#111;border-radius:8px;}
     </style>
 </head>
 <body>
@@ -66,25 +67,24 @@ def catch_all(path):
             <br><br><button onclick="saveName()">Start Chatting</button>
         </div>
         
-        <div id="groupSection">
-            <select id="groupSelect" onchange="joinGroup()">
-                <option value="">Select or create group</option>
-            </select>
-            <br><br>
-            <button id="copyInvite" onclick="copyInvite()" style="display:none;background:#0066cc;">Copy Invite Link</button>
-            <br><br>
-            <button onclick="createGroup()" style="background:#cc6600;">New Private Group</button>
-            <div id="joinStatus"></div>
-        </div>
-        
-        <div id="chatSection">
-            <div style="display:flex;gap:10px;align-items:center;margin-bottom:10px;">
-                <strong id="currentGroupDisplay"></strong>
-                <button id="copyInviteChat" onclick="copyInvite()" style="font-size:12px;padding:6px;">📋</button>
+        <div id="mainUI" style="display:none;">
+            <div class="group-header">
+                <strong id="currentGroupDisplay">No group selected</strong>
+                <button id="copyInviteChat" onclick="copyInvite()" style="font-size:14px;padding:8px;">📋 Invite</button>
             </div>
+            
+            <div id="groupControls">
+                <select id="groupSelect" onchange="switchGroup()">
+                    <option value="">-- Switch Groups --</option>
+                </select>
+                <button onclick="createGroup()" style="background:#cc6600;">New Private Group</button>
+                <div id="joinStatus"></div>
+            </div>
+            
             <div id="messages"></div>
+            
             <div id="inputRow">
-                <input id="messageInput" placeholder="Type message..." disabled maxlength="500">
+                <input id="messageInput" placeholder="Select a group to chat" disabled maxlength="500">
                 <button id="sendBtn" onclick="sendMessage()" disabled>Send</button>
             </div>
         </div>
@@ -102,9 +102,9 @@ def catch_all(path):
             
             fetchName().then(() => {
                 if (userName) {
-                    showGroups();
+                    showMainUI();
                     if (currentGroup) {
-                        setTimeout(() => joinGroupDirect(currentGroup), 500);
+                        setTimeout(() => switchGroup(currentGroup), 500);
                     }
                 } else {
                     showName();
@@ -129,11 +129,12 @@ def catch_all(path):
                 await fetch('/api/save-user', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({name: userName, favorite_groups: []}),
+                    body: JSON.stringify({name: userName}),
                     credentials: 'include'
                 });
             } catch(e) {}
-            showGroups();
+            showMainUI();
+            loadGroups();
         }
 
         async function loadGroups() {
@@ -141,15 +142,17 @@ def catch_all(path):
                 const res = await fetch('/api/groups', {credentials: 'include'});
                 const data = await res.json();
                 const select = document.getElementById('groupSelect');
-                const currentOpt = select.querySelector(`[value="${currentGroup}"]`);
-                select.innerHTML = '<option value="">Your private groups</option>';
+                select.innerHTML = '<option value="">-- Switch Groups --</option>';
                 data.groups.forEach(g => {
                     const opt = document.createElement('option');
                     opt.value = g.code;
                     opt.textContent = `${g.code} (private)`;
                     select.appendChild(opt);
                 });
-                if (currentOpt) select.value = currentGroup;
+                if (currentGroup) {
+                    select.value = currentGroup;
+                    updateChatStatus();
+                }
             } catch(e) {}
         }
 
@@ -157,27 +160,44 @@ def catch_all(path):
             document.getElementById('nameSection').style.display = 'block'; 
         }
         
-        function showGroups() {
-            document.getElementById('groupSection').style.display = 'block';
+        function showMainUI() {
+            document.getElementById('mainUI').style.display = 'flex';
+            document.getElementById('nameSection').style.display = 'none';
             loadGroups();
         }
-        
-        function enableChat() {
-            document.getElementById('chatSection').style.display = 'flex';
-            document.getElementById('groupSection').style.display = 'none';
-            document.getElementById('messageInput').disabled = false;
-            document.getElementById('sendBtn').disabled = false;
-            document.getElementById('sendBtn').classList.add('enabled');
-            document.getElementById('messageInput').classList.add('enabled');
-            document.getElementById('currentGroupDisplay').textContent = currentGroup || 'No group';
-            loadMessages();
+
+        function updateChatStatus() {
+            const input = document.getElementById('messageInput');
+            const sendBtn = document.getElementById('sendBtn');
+            const groupDisplay = document.getElementById('currentGroupDisplay');
+            
+            if (currentGroup) {
+                input.disabled = false;
+                sendBtn.disabled = false;
+                sendBtn.classList.add('enabled');
+                input.placeholder = 'Type message...';
+                groupDisplay.textContent = currentGroup;
+                loadMessages();
+            } else {
+                input.disabled = true;
+                sendBtn.disabled = true;
+                sendBtn.classList.remove('enabled');
+                input.placeholder = 'Select a group to chat';
+                groupDisplay.textContent = 'No group selected';
+                document.getElementById('messages').innerHTML = '';
+            }
         }
 
-        async function joinGroupDirect(code) {
-            currentGroup = code;
-            await saveUserData();
-            await loadGroups();
-            enableChat();
+        async function switchGroup(code = null) {
+            const selectValue = code || document.getElementById('groupSelect').value;
+            if (selectValue) {
+                currentGroup = selectValue;
+                await saveUserData();
+                document.getElementById('groupSelect').value = currentGroup;
+                updateChatStatus();
+                document.getElementById('joinStatus').innerHTML = `✅ Switched to ${currentGroup}`;
+                setTimeout(() => document.getElementById('joinStatus').innerHTML = '', 2000);
+            }
         }
 
         async function createGroup() {
@@ -186,19 +206,11 @@ def catch_all(path):
                 const data = await res.json();
                 currentGroup = data.code;
                 await saveUserData();
-                await loadGroups();
-                enableChat();
+                loadGroups();
+                updateChatStatus();
+                document.getElementById('joinStatus').innerHTML = `✅ Created ${currentGroup}`;
             } catch(e) {
-                alert('Create failed');
-            }
-        }
-
-        async function joinGroup() {
-            const code = document.getElementById('groupSelect').value;
-            if (code) {
-                currentGroup = code;
-                await saveUserData();
-                enableChat();
+                document.getElementById('joinStatus').innerHTML = '❌ Create failed';
             }
         }
 
@@ -217,10 +229,10 @@ def catch_all(path):
             if (currentGroup) {
                 const inviteUrl = `${window.location.origin}/#${currentGroup}`;
                 navigator.clipboard.writeText(inviteUrl).then(() => {
-                    const btn = document.getElementById('copyInvite') || document.getElementById('copyInviteChat');
+                    const btn = document.getElementById('copyInviteChat');
                     const original = btn.textContent;
                     btn.textContent = '✅ Copied!';
-                    setTimeout(() => btn.textContent = original, 2000);
+                    setTimeout(() => btn.textContent = '📋 Invite', 2000);
                 });
             }
         }
@@ -248,13 +260,12 @@ def catch_all(path):
                 const msgs = await res.json();
                 const div = document.getElementById('messages');
                 div.innerHTML = msgs.map(m => 
-                    `<div class="msg"><strong>${m.user}:</strong> ${m.msg} <small style="color:#888;">${m.time}</small></div>`
+                    `<div class="msg"><strong>${m.user}:</strong> ${m.msg} <span class="time"> ${m.time}</span></div>`
                 ).join('');
                 div.scrollTop = div.scrollHeight;
             } catch(e) {}
         }
 
-        // Enter to send
         document.addEventListener('keypress', function(e) {
             if (e.key === 'Enter' && !document.getElementById('messageInput').disabled) {
                 sendMessage();
@@ -267,6 +278,7 @@ def catch_all(path):
 </html>
     '''
 
+# API endpoints (unchanged)
 @app.route('/api/user')
 def get_user():
     data = get_user_data()
