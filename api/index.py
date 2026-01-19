@@ -26,7 +26,6 @@ def join_group(code):
 
 @app.route('/api/messages/<code>')
 def get_messages(code):
-    # Get messages from client-side localStorage via header
     messages_json = request.headers.get('X-Messages-' + code, '[]')
     try:
         messages = json.loads(messages_json)[-50:]
@@ -80,8 +79,9 @@ def catch_all(path):
         body{background:#1a1a1a;color:#eee;padding:20px;min-height:100vh;}
         .name-screen{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:70vh;text-align:center;}
         #nameInput{width:250px;max-width:90vw;padding:12px;border:none;border-radius:8px;background:#333;color:#eee;font-size:16px;}
-        #setNameBtn{margin-top:15px;padding:12px 24px;background:#4a4a4a;border:none;border-radius:8px;color:#eee;cursor:pointer;font-size:16px;}
-        #setNameBtn:hover{background:#666;}
+        #setNameBtn{margin-top:15px;padding:12px 24px;background:#4CAF50;border:none;border-radius:8px;color:white;cursor:pointer;font-size:16px;font-weight:bold;}
+        #setNameBtn:hover{background:#45a049;}
+        #setNameBtn:active{background:#3d8b40;}
         .chat-screen{display:none;flex-direction:column;height:100vh;max-width:600px;margin:0 auto;}
         .header{padding:15px;background:#2a2a2a;text-align:center;border-radius:8px 8px 0 0;}
         .groups{padding:15px;background:#333;border-radius:0 0 8px 8px;}
@@ -106,8 +106,9 @@ def catch_all(path):
     <div id="nameScreen" class="name-screen">
         <h1>🔒 Chat</h1>
         <p>Enter your name:</p>
-        <input id="nameInput" type="text" placeholder="Your name..." maxlength="20">
-        <br><button id="setNameBtn">Continue →</button>
+        <input id="nameInput" type="text" placeholder="Your name..." maxlength="20" autofocus>
+        <br><br>
+        <button id="setNameBtn" onclick="setName()">Continue →</button>
     </div>
     
     <div id="chatScreen" class="chat-screen">
@@ -129,60 +130,72 @@ def catch_all(path):
     <script>
         let currentGroup = '';
         let username = localStorage.getItem('chat_username') || '';
-        
-        // LOAD USER GROUPS FROM LOCALSTORAGE
         let userGroups = JSON.parse(localStorage.getItem('chat_groups') || '{}');
 
-        // AUTO-JOIN FROM INVITE
+        // CHECK FOR INVITE LINK
         if (window.groupCode) {
             const code = window.groupCode;
             userGroups[code] = userGroups[code] || [];
             localStorage.setItem('chat_groups', JSON.stringify(userGroups));
-            joinFromInvite(code);
+            skipToChat(code);
         } else {
-            init();
+            checkSavedName();
         }
 
-        function joinFromInvite(code) {
-            document.getElementById('nameScreen').style.display = 'none';
-            document.getElementById('chatScreen').style.display = 'flex';
-            document.getElementById('nameDisplay').textContent = username + ' ';
-            currentGroup = code;
-            updateGroupInfo(code);
-            setInterval(loadMessages, 2000);
-        }
-
-        function init(){
+        function checkSavedName() {
             if (username) {
-                // NAME SAVED - SHOW GROUPS
+                // SKIP NAME SCREEN - GO DIRECTLY TO CHAT
                 document.getElementById('nameScreen').style.display = 'none';
                 document.getElementById('chatScreen').style.display = 'flex';
                 document.getElementById('nameDisplay').textContent = username + ' ';
                 loadGroups();
-                if(currentGroup) loadMessages();
-                setInterval(() => {
-                    if(currentGroup) loadMessages();
-                    saveGroups(); // AUTO-SAVE GROUPS
-                }, 2000);
+                setInterval(chatLoop, 2000);
             } else {
-                document.getElementById('setNameBtn').onclick = setName;
-                document.getElementById('nameInput').addEventListener('keypress', e => e.key === 'Enter' && setName());
+                // FIRST TIME - SETUP NAME BUTTON
                 document.getElementById('nameInput').focus();
             }
         }
 
-        function setName(){
+        function setName() {
             username = document.getElementById('nameInput').value.trim();
-            if(!username) return;
+            if (!username) {
+                alert('Please enter a name');
+                return;
+            }
             localStorage.setItem('chat_username', username);
+            skipToChat();
+        }
+
+        function skipToChat(code = null) {
             document.getElementById('nameScreen').style.display = 'none';
             document.getElementById('chatScreen').style.display = 'flex';
             document.getElementById('nameDisplay').textContent = username + ' ';
+            
+            if (code) {
+                currentGroup = code;
+                userGroups[code] = userGroups[code] || [];
+                localStorage.setItem('chat_groups', JSON.stringify(userGroups));
+            }
+            
             loadGroups();
-            setInterval(loadMessages, 2000);
+            if (currentGroup) {
+                updateGroupInfo(currentGroup);
+            }
+            setInterval(chatLoop, 2000);
         }
 
-        function loadGroups(){
+        function chatLoop() {
+            if (currentGroup) {
+                loadMessages();
+                saveGroups();
+            }
+        }
+
+        function saveGroups() {
+            localStorage.setItem('chat_groups', JSON.stringify(userGroups));
+        }
+
+        function loadGroups() {
             const select = document.getElementById('groupSelect');
             select.innerHTML = '<option>Select group or create new</option>';
             
@@ -193,16 +206,15 @@ def catch_all(path):
                 select.appendChild(option);
             });
             
-            if(Object.keys(userGroups).length > 0 && !currentGroup){
+            if (Object.keys(userGroups).length > 0 && !currentGroup) {
                 currentGroup = Object.keys(userGroups)[0];
                 select.value = currentGroup;
                 updateGroupInfo(currentGroup);
             }
         }
 
-        function updateGroupInfo(code){
+        function updateGroupInfo(code) {
             currentGroup = code;
-            document.getElementById('groupInfo').style.display = 'flex';
             document.getElementById('groupInfo').innerHTML = 
                 `<div class="group-info">
                     <span>${code}</span>
@@ -211,11 +223,7 @@ def catch_all(path):
             loadMessages();
         }
 
-        function saveGroups(){
-            localStorage.setItem('chat_groups', JSON.stringify(userGroups));
-        }
-
-        async function createGroup(){
+        async function createGroup() {
             const res = await fetch('/api/create-group', {method: 'POST'});
             const data = await res.json();
             const code = data.code;
@@ -226,62 +234,76 @@ def catch_all(path):
             updateGroupInfo(code);
         }
 
-        async function copyInvite(code){
+        async function copyInvite(code) {
             const inviteUrl = `${window.location.origin}/join/${code}`;
-            await navigator.clipboard.writeText(inviteUrl);
-            const btn = event.target;
-            const original = btn.textContent;
-            btn.textContent = '✓';
-            setTimeout(() => btn.textContent = original, 1000);
+            try {
+                await navigator.clipboard.writeText(inviteUrl);
+                event.target.textContent = '✓';
+                setTimeout(() => event.target.textContent = '📋', 1000);
+            } catch(e) {
+                prompt('Copy this link:', inviteUrl);
+            }
         }
 
-        async function loadMessages(){
-            if(!currentGroup) return;
+        async function loadMessages() {
+            if (!currentGroup) return;
             try {
                 const messages = userGroups[currentGroup] || [];
                 const res = await fetch(`/api/messages/${currentGroup}`, {
-                    headers: {{'X-Messages-' + currentGroup: JSON.stringify(messages)}}
+                    headers: {'X-Messages-' + currentGroup: JSON.stringify(messages)}
                 });
                 const data = await res.json();
-                document.getElementById('messages').innerHTML = data.html || '<div style="opacity:0.5;text-align:center;padding:20px;">No messages yet</div>';
+                document.getElementById('messages').innerHTML = data.html || 
+                    '<div style="opacity:0.5;text-align:center;padding:20px;">No messages yet</div>';
                 document.getElementById('messages').scrollTop = document.getElementById('messages').scrollHeight;
             } catch(e) {}
         }
 
-        async function sendMessage(){
-            if(!currentGroup) return;
+        async function sendMessage() {
+            if (!currentGroup) return;
             const input = document.getElementById('messageInput');
             const text = input.value.trim();
-            if(!text) return;
+            if (!text) return;
             
             input.disabled = true;
             input.value = 'Sending...';
             
-            const res = await fetch(`/api/send-message/${currentGroup}`, {
-                method: 'POST',
-                headers: {{'Content-Type': 'application/json'}},
-                body: JSON.stringify({text, username})
-            });
-            const data = await res.json();
-            
-            if(data.status === 'sent' && data.message){
-                if(!userGroups[currentGroup]) userGroups[currentGroup] = [];
-                userGroups[currentGroup].push(data.message);
-                saveGroups();
-            }
+            try {
+                const res = await fetch(`/api/send-message/${currentGroup}`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({text, username})
+                });
+                const data = await res.json();
+                
+                if (data.status === 'sent' && data.message) {
+                    if (!userGroups[currentGroup]) userGroups[currentGroup] = [];
+                    userGroups[currentGroup].push(data.message);
+                    saveGroups();
+                }
+            } catch(e) {}
             
             input.value = '';
             input.disabled = false;
             loadMessages();
         }
 
-        // EVENT LISTENERS
-        document.getElementById('newGroupBtn').onclick = createGroup;
-        document.getElementById('sendBtn').onclick = sendMessage;
-        document.getElementById('groupSelect').onchange = function(){
-            if(this.value) updateGroupInfo(this.value);
-        };
-        document.getElementById('messageInput').addEventListener('keypress', e => e.key === 'Enter' && sendMessage());
+        // ✅ BULLETPROOF EVENT LISTENERS
+        document.addEventListener('DOMContentLoaded', function() {
+            const continueBtn = document.getElementById('setNameBtn');
+            const nameInput = document.getElementById('nameInput');
+            const newGroupBtn = document.getElementById('newGroupBtn');
+            const sendBtn = document.getElementById('sendBtn');
+            const groupSelect = document.getElementById('groupSelect');
+            const messageInput = document.getElementById('messageInput');
+
+            if (continueBtn) continueBtn.onclick = setName;
+            if (nameInput) nameInput.onkeypress = function(e) { if (e.key === 'Enter') setName(); };
+            if (newGroupBtn) newGroupBtn.onclick = createGroup;
+            if (sendBtn) sendBtn.onclick = sendMessage;
+            if (groupSelect) groupSelect.onchange = function() { if (this.value) updateGroupInfo(this.value); };
+            if (messageInput) messageInput.onkeypress = function(e) { if (e.key === 'Enter') sendMessage(); };
+        });
     </script>
 </body>
 </html>'''
