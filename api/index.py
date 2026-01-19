@@ -16,134 +16,219 @@ def get_user_data():
 def save_user_data(user_data):
     session['user_data'] = json.dumps(user_data)
 
-def get_user_groups():
+def get_groups():
     groups_data = session.get('groups', '{}')
     return json.loads(groups_data) if groups_data else {}
 
-def save_user_groups(groups_data):
+def save_groups(groups_data):
     session['groups'] = json.dumps(groups_data)
 
 @app.route('/api/set-name', methods=['POST'])
 def set_name():
-    data = request.get_json() or {}
+    data = request.get_json()
     name = data.get('name', '').strip()
-    if name and len(name) <= 20:
-        user_data = get_user_data()
-        user_data['name'] = name
-        save_user_data(user_data)
-        return jsonify({'success': True})
-    return jsonify({'error': 'Invalid name'}), 400
+    if len(name) < 2:
+        return jsonify({'error': 'Name too short'}), 400
+    
+    user_data = get_user_data()
+    user_data['name'] = name
+    save_user_data(user_data)
+    return jsonify({'success': True})
 
 @app.route('/api/create-group', methods=['POST'])
 def create_group():
-    user_groups = get_user_groups()
-    user_data = get_user_data()
-    
     code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))
-    user_groups[code] = []
-    save_user_groups(user_groups)
+    groups = get_groups()
+    groups[code] = []
+    save_groups(groups)
     
-    if 'favorite_groups' not in user_data:
-        user_data['favorite_groups'] = []
+    user_data = get_user_data()
     if code not in user_data['favorite_groups']:
         user_data['favorite_groups'].append(code)
-    save_user_data(user_data)
+        save_user_data(user_data)
     
     return jsonify({'code': code})
 
-@app.route('/api/groups', methods=['GET'])
-def groups_api():
+@app.route('/api/groups')
+def list_groups():
     user_data = get_user_data()
-    return jsonify(user_data.get('favorite_groups', []))
+    groups = get_groups()
+    return jsonify([{'code': code, 'private': True} for code in user_data['favorite_groups'] if code in groups])
 
-@app.route('/api/messages/<code>', methods=['GET', 'POST'])
-def messages(code):
-    user_groups = get_user_groups()
-    
-    if code not in user_groups:
-        user_groups[code] = []
-        save_user_groups(user_groups)
-    
-    if request.method == 'POST':
-        data = request.get_json() or {}
-        user_data = get_user_data()
-        username = user_data.get('name', 'Anonymous')
-        
-        user_groups[code].append({
-            'user': username,
-            'text': data.get('text', ''),
-            'timestamp': data.get('timestamp', 'Now')
-        })
-        save_user_groups(user_groups)
-        return jsonify({'status': 'sent'})
+@app.route('/api/messages/<code>')
+def get_messages(code):
+    groups = get_groups()
+    if code not in groups:
+        groups[code] = []
+        save_groups(groups)
     
     messages_html = ''
-    for msg in user_groups[code][-50:]:
-        messages_html += f'<div class="message"><strong>{msg["user"]}:</strong> <span style="opacity:0.7">{msg["timestamp"]}</span> {msg["text"]}</div>'
+    for msg in groups[code][-50:]:
+        messages_html += f'<div><strong>{msg["user"]}:</strong> {msg["text"]} <small>{msg.get("timestamp", "Now")}</small></div>'
     
     return jsonify({'html': messages_html})
+
+@app.route('/api/messages/<code>', methods=['POST'])
+def send_message(code):
+    data = request.get_json() or {}
+    user = get_user_data()['name'] or 'Anonymous'
+    
+    groups = get_groups()
+    if code not in groups:
+        groups[code] = []
+    
+    groups[code].append({
+        'user': user,
+        'text': data.get('text', '').strip(),
+        'timestamp': data.get('timestamp', 'Now')
+    })
+    save_groups(groups)
+    
+    return jsonify({'status': 'sent'})
 
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
 def catch_all(path):
     return '''
 <!DOCTYPE html>
-<html><head><title>🔒 Private Chat</title>
-<style>*{margin:0;padding:0;box-sizing:border-box;}
-body{font-family:system-ui;background:#000;color:#e0e0e0;height:100vh;overflow:hidden;}
-.container{max-width:800px;margin:0 auto;height:100vh;display:flex;flex-direction:column;}
-.name-screen{display:flex;flex-direction:column;justify-content:center;align-items:center;height:100vh;gap:20px;}
-.chat-screen{display:none;flex-direction:column;height:100vh;}
-.header{background:#111;padding:15px;border-bottom:1px solid #333;display:flex;justify-content:space-between;align-items:center;}
-.groups{flex-grow:1;overflow-x:auto;padding:0 15px;max-width:400px;}
-.group-btn{background:#333;color:#e0e0e0;border:none;padding:8px 12px;margin:2px;border-radius:20px;font-size:12px;cursor:pointer;white-space:nowrap;}
-.group-btn:hover{background:#555;}
-.group-btn.active{background:#007acc;}
-.messages{flex:1;overflow-y:auto;padding:20px 15px;background:#000;}
-.message{margin-bottom:12px;padding:8px;background:#111;border-radius:8px;}
-.message strong{color:#007acc;}
-.input-area{display:flex;padding:15px;background:#111;border-top:1px solid #333;gap:10px;}
-#messageInput{flex:1;background:#222;color:#e0e0e0;border:1px solid #444;border-radius:20px;padding:12px 16px;font-size:14px;}
-#sendBtn{background:#007acc;color:white;border:none;border-radius:20px;padding:12px 20px;cursor:pointer;font-weight:500;flex-shrink:0;}
-#nameInput{background:#222;color:#e0e0e0;border:1px solid #444;border-radius:8px;padding:20px;font-size:18px;width:300px;max-width:90vw;text-align:center;}
-.btn{background:#007acc;color:white;border:none;border-radius:8px;padding:15px 30px;font-size:16px;cursor:pointer;}
-.btn:hover{background:#005a99;}
-.status{color:#888;font-size:12px;}
-.private::after{content:" 🔒 private";opacity:0.7;font-size:0.8em;}
-</style></head>
+<html>
+<head>
+<title>Private Chat</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#000;color:#e0e0e0;height:100vh;overflow:hidden;}
+.container{max-width:600px;margin:0 auto;height:100vh;display:flex;flex-direction:column;}
+.header{padding:20px;background:linear-gradient(135deg,#1a1a1a,#2d2d2d);text-align:center;border-bottom:1px solid #444;}
+.name-screen{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;background:#000;}
+.name-screen input{padding:15px;font-size:18px;border:2px solid #444;background:#1a1a1a;color:#e0e0e0;border-radius:10px;width:80%;max-width:300px;text-align:center;}
+.name-screen button{padding:15px 30px;background:#0a74da;border:none;color:white;border-radius:10px;font-size:16px;cursor:pointer;margin-top:20px;}
+.chat-screen{display:flex;flex-direction:column;}
+.groups{padding:15px;background:#1a1a1a;border-bottom:1px solid #444;}
+.groups select{width:100%;padding:10px;background:#2d2d2d;color:#e0e0e0;border:1px solid #444;border-radius:5px;font-size:14px;}
+.messages{flex:1;overflow-y:auto;padding:20px;background:#0f0f0f;}
+.message{margin-bottom:10px;padding:10px;background:#1a1a1a;border-radius:10px;}
+.input-area{padding:20px;background:#1a1a1a;border-top:1px solid #444;display:flex;gap:10px;}
+.input-area input{flex:1;padding:15px;background:#2d2d2d;color:#e0e0e0;border:1px solid #444;border-radius:20px;font-size:16px;}
+.input-area button{padding:15px 25px;background:#0a74da;border:none;color:white;border-radius:20px;cursor:pointer;font-size:16px;}
+.private{font-style:italic;color:#888;}
+small{color:#888;}
+button:disabled{background:#444;cursor:not-allowed;}
+</style>
+</head>
 <body>
-<div class="container">
 <div id="name-screen" class="name-screen">
-<h1>🔒 Private Chat</h1>
-<input id="nameInput" placeholder="Enter your name..." maxlength="20">
-<button id="setNameBtn" class="btn">Start Chatting</button>
-<div class="status">Your chats are 100% private to you</div>
+    <h1>Enter Your Name</h1>
+    <input id="nameInput" placeholder="Your name..." maxlength="20">
+    <button id="setNameBtn">Continue</button>
 </div>
-<div id="chat-screen" class="chat-screen">
-<div class="header">
-<div>Your Groups:</div>
-<button id="newGroupBtn" class="group-btn">+ New Group</button>
+<div id="chat-screen" class="container chat-screen" style="display:none;">
+    <div class="header">
+        <h2>Private Chat</h2>
+        <div id="currentUser"></div>
+    </div>
+    <div class="groups">
+        <select id="groupSelect"><option>No groups yet</option></select>
+        <button onclick="createGroup()">New Private Group</button>
+    </div>
+    <div id="messages" class="messages"></div>
+    <div class="input-area">
+        <input id="messageInput" placeholder="Type a message..." disabled>
+        <button id="sendBtn" onclick="sendMessage()" disabled>Send</button>
+    </div>
 </div>
-<div id="groupsList" class="groups"></div>
-<div id="messages" class="messages">Select a group to start chatting</div>
-<div class="input-area">
-<input id="messageInput" placeholder="Type a message..." disabled>
-<button id="sendBtn" disabled>Send</button>
-</div>
-</div>
-</div>
-<script>
-let currentGroup=null,user='',groups=[];
 
-function init(){
-    document.getElementById('setNameBtn').onclick=setName;
-    document.getElementById('nameInput').addEventListener('keypress',e=>e.key==='Enter'&&setName());
+<script>
+let currentGroup = '';
+const userData = {name: '', favoriteGroups: []};
+
+async function init(){
+    try{
+        const res = await fetch('/api/groups');
+        const groups = await res.json();
+        updateGroups(groups);
+    }catch(e){console.log('No groups yet');}
+    document.getElementById('setNameBtn').onclick = setName;
+    document.getElementById('nameInput').addEventListener('keypress', e => e.key === 'Enter' && setName());
     document.getElementById('nameInput').focus();
 }
 
 async function setName(){
-    user=document.getElementById('nameInput').value.trim();
-    if(!user)return;
-    const res=await fetch('/api/set-name',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:user})});
+    const name = document.getElementById('nameInput').value.trim();
+    if(!name) return;
+    
+    const res = await fetch('/api/set-name', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({name})
+    });
+    
     if(res.ok){
-        document.getElementById('name-screen
+        document.getElementById('name-screen').style.display = 'none';
+        document.getElementById('chat-screen').style.display = 'flex';
+        userData.name = name;
+        document.getElementById('currentUser').textContent = `Logged in as: ${name}`;
+        loadMessages();
+        setInterval(loadMessages, 2000);
+    }
+}
+
+function updateGroups(groups){
+    const select = document.getElementById('groupSelect');
+    select.innerHTML = groups.map(g => `<option value="${g.code}">${g.code} <span class="private">(private)</span></option>`).join('') || '<option>No groups yet</option>';
+}
+
+async function createGroup(){
+    const res = await fetch('/api/create-group', {method: 'POST'});
+    const data = await res.json();
+    const groups = await (await fetch('/api/groups')).json();
+    updateGroups(groups);
+    document.getElementById('groupSelect').value = data.code;
+    joinGroup(data.code);
+}
+
+document.getElementById('groupSelect').onchange = function(){
+    if(this.value) joinGroup(this.value);
+};
+
+function joinGroup(code){
+    currentGroup = code;
+    document.getElementById('messageInput').disabled = false;
+    document.getElementById('sendBtn').disabled = false;
+    document.getElementById('messageInput').focus();
+    loadMessages();
+}
+
+async function loadMessages(){
+    if(!currentGroup) return;
+    const res = await fetch(`/api/messages/${currentGroup}`);
+    const data = await res.json();
+    document.getElementById('messages').innerHTML = data.html;
+    document.getElementById('messages').scrollTop = document.getElementById('messages').scrollHeight;
+}
+
+async function sendMessage(){
+    const text = document.getElementById('messageInput').value.trim();
+    if(!text || !currentGroup) return;
+    
+    await fetch(`/api/messages/${currentGroup}`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({text, timestamp: new Date().toLocaleTimeString()})
+    });
+    
+    document.getElementById('messageInput').value = '';
+    loadMessages();
+}
+
+document.getElementById('messageInput').addEventListener('keypress', e => {
+    if(e.key === 'Enter') sendMessage();
+});
+
+window.onload = init;
+</script>
+</body>
+</html>
+    '''
+
+if __name__ == '__main__':
+    app.run(debug=True)
