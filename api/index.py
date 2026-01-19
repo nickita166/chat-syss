@@ -5,7 +5,7 @@ import random
 import string
 
 app = Flask(__name__)
-app.secret_key = os.environ.get('SECRET_KEY', 'fallback-key')
+app.secret_key = os.environ.get('SECRETKEY', 'fallback-key')
 
 users = {}
 groups = {}
