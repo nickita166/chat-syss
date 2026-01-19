@@ -10,15 +10,12 @@ import sqlite3
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRETKEY', 'your-super-secret-key-change-in-production')
 
-# Use Vercel writable /tmp directory
 DB_PATH = '/tmp/chats.db'
 
 def get_db_connection():
-    # Create DB in writable /tmp if doesn't exist
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     
-    # Init tables on first connection
     conn.execute('''CREATE TABLE IF NOT EXISTS users (
         user_id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
@@ -51,9 +48,9 @@ def set_name():
             return jsonify({'error': 'Invalid name'}), 400
         
         user_id = get_user_id()
-        conn = get_db_connection()
+        session['username'] = name  # ← FIX 1: Store name in session
         
-        # Simplified upsert - no JSON functions
+        conn = get_db_connection()
         existing = conn.execute('SELECT favorite_groups FROM users WHERE user_id = ?', (user_id,)).fetchone()
         if existing:
             conn.execute('UPDATE users SET name = ? WHERE user_id = ?', (name, user_id))
@@ -74,7 +71,6 @@ def create_group():
         code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))
         
         conn = get_db_connection()
-        # Simple append to favorite_groups JSON
         existing = conn.execute('SELECT favorite_groups FROM users WHERE user_id = ?', (user_id,)).fetchone()
         groups = json.loads(existing['favorite_groups']) if existing else []
         groups.append(code)
@@ -84,7 +80,7 @@ def create_group():
                         (json.dumps(groups), user_id))
         else:
             conn.execute('INSERT INTO users (user_id, name, favorite_groups) VALUES (?, ?, ?)', 
-                        (user_id, '', json.dumps(groups)))
+                        (user_id, session.get('username', ''), json.dumps(groups)))
         
         conn.commit()
         conn.close()
@@ -118,9 +114,11 @@ def messages(code):
                 conn.close()
                 return jsonify({'error': 'Empty message'}), 400
             
-            name = session.get('username', 'Anonymous')
+            username = session.get('username', 'Anonymous')  # ← FIX 2: Use session username
+            timestamp = datetime.now().strftime('%I:%M:%S %p')  # ← FIX 3: 12hr AM/PM
+            
             conn.execute('INSERT INTO messages (user_id, group_code, username, text, timestamp) VALUES (?, ?, ?, ?, ?)',
-                        (user_id, code, name, text, datetime.now().strftime('%H:%M:%S')))
+                        (user_id, code, username, text, timestamp))
             conn.commit()
             conn.close()
             return jsonify({'status': 'sent'})
@@ -173,10 +171,10 @@ body{font-family:system-ui;background:#000;color:#e0e0e0;height:100vh;overflow:h
 <body>
 <div class="container">
 <div id="name-screen" class="name-screen">
-<h1>🔒 Private Chat</h1>
+<h1>🔒 Private SQLite Chat</h1>
 <input id="nameInput" placeholder="Enter your name..." maxlength="20">
 <button id="setNameBtn" class="btn">Start Chatting</button>
-<div class="status">Chats persist forever (  )</div>
+<div class="status">Chats persist forever (SQLite /tmp)</div>
 </div>
 <div id="chat-screen" class="chat-screen">
 <div class="header">
