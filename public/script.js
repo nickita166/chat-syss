@@ -1,28 +1,59 @@
 let currentGroup = '';
-let user = 'Anonymous';
-let authenticated = true;
+let user = '';
+let hasName = false;
 
 function init() {
-    // Skip login check - go straight to chat
-    showChat();
-    loadGroups();
-    
-    currentGroup = localStorage.getItem('currentGroup') || '';
-    if (currentGroup) {
-        document.getElementById('codeInput').value = currentGroup;
-        joinGroup(currentGroup);
+    checkName();
+    setInterval(() => {
+        if (currentGroup && hasName) loadMessages();
+    }, 3000);
+}
+
+function checkName() {
+    user = localStorage.getItem('chatUser') || '';
+    if (user) {
+        hasName = true;
+        showChat();
+        document.getElementById('user-display').textContent = `Logged in as ${user}`;
+        loadGroups();
+        currentGroup = localStorage.getItem('currentGroup') || '';
+        if (currentGroup) {
+            document.getElementById('codeInput').value = currentGroup;
+            joinGroup(currentGroup);
+        }
     }
-    
-    setInterval(loadGroups, 30000);
 }
 
 function showChat() {
-    document.getElementById('login-prompt').style.display = 'none';
+    document.getElementById('name-screen').style.display = 'none';
     document.getElementById('chat-section').style.display = 'block';
-    document.getElementById('header').style.display = 'flex';
-    document.querySelectorAll('button:not(.logout), input, select').forEach(el => el.disabled = false);
+    document.querySelectorAll('button:not(.logout), input:not(#nameInput), select').forEach(el => el.disabled = false);
     document.getElementById('user-display').textContent = `Logged in as ${user}`;
+    loadGroups();
 }
+
+// FIX: Proper event listener for name button
+document.addEventListener('DOMContentLoaded', function() {
+    document.getElementById('setNameBtn').addEventListener('click', function() {
+        const name = document.getElementById('nameInput').value.trim();
+        const errorDiv = document.getElementById('nameError');
+        
+        if (!name || name.length > 20) {
+            errorDiv.textContent = 'Name required (max 20 chars)';
+            return;
+        }
+        
+        if (!/^[a-zA-Z0-9\s]{2,20}$/.test(name)) {
+            errorDiv.textContent = 'Letters, numbers, spaces only';
+            return;
+        }
+        
+        user = name;
+        hasName = true;
+        localStorage.setItem('chatUser', user);
+        showChat();
+    });
+});
 
 async function loadGroups() {
     try {
@@ -57,14 +88,12 @@ async function joinGroup(code = null) {
         alert('Enter valid 10-character code');
         return;
     }
-
     try {
         await fetch('/api/groups', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ code: inputCode })
         });
-        
         currentGroup = inputCode;
         localStorage.setItem('currentGroup', currentGroup);
         document.getElementById('groupSelect').value = inputCode;
@@ -99,14 +128,14 @@ async function loadMessages() {
 
 document.getElementById('msgForm').onsubmit = async (e) => {
     e.preventDefault();
-    if (!currentGroup) return;
-    
+    if (!hasName || !currentGroup) {
+        alert('Please enter your name first');
+        return;
+    }
     const input = document.getElementById('msgInput');
     const text = input.value.trim();
     if (!text) return;
-    
     const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    
     try {
         await fetch(`/api/messages/${currentGroup}`, {
             method: 'POST',
@@ -129,9 +158,5 @@ function escapeHtml(text) {
     div.textContent = text;
     return div.innerHTML;
 }
-
-setInterval(() => {
-    if (currentGroup) loadMessages();
-}, 3000);
 
 window.onload = init;
